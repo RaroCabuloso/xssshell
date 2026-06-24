@@ -467,126 +467,54 @@
   }
 
   async function doLs(args) {
-    if (useApiSource) {
-      try {
-        const pathQuery = currentDir === '/' ? '' : currentDir.replace(/^\//, '');
-        const result = await window.apiListFolder(pathQuery);
-        
-        if (result.success && result.data && result.data.items) {
-          const items = result.data.items;
-          if (items.length === 0) {
-            w("(diretório vazio)\n");
-            return;
-          }
+    if (!window.API_CONFIG.ready) {
+      werr('ls: requer API ativa\n');
+      return;
+    }
 
-          const dirs = [], files = [];
-          for (const item of items) {
-            if (item.type === 'folder') {
-              dirs.push(`<span class="ls-dir">${esc(item.name)}/</span>`);
-            } else {
-              const ext = item.name.split(".").pop();
-              const isScript = ["js", "sh", "py", "rb"].includes(ext || "");
-              files.push(
-                isScript 
-                  ? `<span class="ls-exe">${esc(item.name)}*</span>` 
-                  : `<span class="ls-file">${esc(item.name)}</span>`
-              );
-            }
-          }
-          
-          dirs.sort();
-          files.sort();
-          const all = [...dirs, ...files];
-          whtml(all.join("  ") + "\n");
-        } else {
-          werr(`ls: erro ao listar diretório\n`);
+    try {
+      const pathQuery = currentDir === '/' ? '' : currentDir.replace(/^\//, '');
+      const result = await window.apiListFolder(pathQuery);
+
+      if (result.success && result.data && result.data.items) {
+        const items = result.data.items;
+        if (items.length === 0) {
+          w("(diretório vazio)\n");
+          return;
         }
-      } catch (e) {
-        werr(`ls: ${e.message}\n`);
-      }
-      return;
-    }
 
-    refreshFilesystem();
-    const node = getCurrentNode();
-
-    if (!node || !node.children) {
-      werr("ls: diretório não encontrado\n");
-      return;
-    }
-
-    const entries = Object.entries(node.children);
-
-    if (entries.length === 0) {
-      w("(diretório vazio)\n");
-      return;
-    }
-
-    const dirs = [], files = [];
-    for (const [name, child] of entries) {
-      if (child.type === "dir") {
-        dirs.push(`<span class="ls-dir">${esc(name)}/</span>`);
+        const dirs = [], files = [];
+        for (const item of items) {
+          if (item.type === 'folder') {
+            dirs.push(`<span class="ls-dir">${esc(item.name)}/</span>`);
+          } else {
+            const ext = item.name.split(".").pop();
+            const isScript = ["js", "sh", "py", "rb"].includes(ext || "");
+            files.push(
+              isScript 
+                ? `<span class="ls-exe">${esc(item.name)}*</span>` 
+                : `<span class="ls-file">${esc(item.name)}</span>`
+            );
+          }
+        }
+        
+        dirs.sort();
+        files.sort();
+        const all = [...dirs, ...files];
+        whtml(all.join("  ") + "\n");
       } else {
-        const ext = name.split(".").pop();
-        const isScript = ["js", "sh", "py", "rb"].includes(ext || "");
-        files.push(
-          isScript 
-            ? `<span class="ls-exe">${esc(name)}*</span>` 
-            : `<span class="ls-file">${esc(name)}</span>`
-        );
+        werr(`ls: erro ao listar diretório\n`);
       }
+    } catch (e) {
+      werr(`ls: ${e.message}\n`);
     }
-
-    dirs.sort();
-    files.sort();
-    const all = [...dirs, ...files];
-    whtml(all.join("  ") + "\n");
   }
 
   async function doCd(target) {
-    if (useApiSource) {
-      if (!target || target === "/") {
-        currentPath = [];
-        currentDir = "/";
-        updatePrompt();
-        saveSession();
-        return;
-      }
-
-      if (target === "..") {
-        if (currentPath.length > 0) {
-          currentPath.pop();
-        }
-        currentDir = currentPath.length === 0 ? "/" : "/" + currentPath.join("/");
-        updatePrompt();
-        saveSession();
-        return;
-      }
-
-      if (target === ".") return;
-
-      // Tenta navegar via API
-      try {
-        const pathQuery = (currentDir === '/' ? '' : currentDir.replace(/^\//, '')) + 
-                          (currentDir === '/' ? '' : '/') + target;
-        const cleanPath = pathQuery.replace(/\/+/g, '/').replace(/^\//, '');
-        const result = await window.apiListFolder(cleanPath);
-        
-        if (result.success) {
-          currentDir = '/' + cleanPath;
-          currentPath = cleanPath.split('/').filter(p => p);
-          updatePrompt();
-          saveSession();
-        } else {
-          werr(`cd: ${target}: diretório não encontrado\n`);
-        }
-      } catch (e) {
-        werr(`cd: ${target}: ${e.message}\n`);
-      }
+    if (!window.API_CONFIG.ready) {
+      werr('cd: requer API ativa\n');
       return;
     }
-
-    refreshFilesystem();
 
     if (!target || target === "/") {
       currentPath = [];
@@ -608,95 +536,46 @@
 
     if (target === ".") return;
 
-    if (target.startsWith("/")) {
-      const segments = target.split("/").filter(s => s);
-      let node = fileTree;
-      for (const seg of segments) {
-        if (!node.children || !node.children[seg] || node.children[seg].type !== "dir") {
-          werr(`cd: ${target}: diretório não encontrado\n`);
-          return;
-        }
-        node = node.children[seg];
+    try {
+      const pathQuery = (currentDir === '/' ? '' : currentDir.replace(/^\//, '')) + 
+                        (currentDir === '/' ? '' : '/') + target;
+      const cleanPath = pathQuery.replace(/\/+/g, '/').replace(/^\//, '');
+      const result = await window.apiListFolder(cleanPath);
+      
+      if (result.success) {
+        currentDir = '/' + cleanPath;
+        currentPath = cleanPath.split('/').filter(p => p);
+        updatePrompt();
+        saveSession();
+      } else {
+        werr(`cd: ${target}: diretório não encontrado\n`);
       }
-      currentPath = segments;
-      currentDir = "/" + segments.join("/");
-      updatePrompt();
-      saveSession();
-      return;
+    } catch (e) {
+      werr(`cd: ${target}: ${e.message}\n`);
     }
-
-    const node = getCurrentNode();
-    if (!node || !node.children || !node.children[target]) {
-      werr(`cd: ${target}: diretório não encontrado\n`);
-      return;
-    }
-
-    const child = node.children[target];
-    if (child.type !== "dir") {
-      werr(`cd: ${target}: não é um diretório\n`);
-      return;
-    }
-
-    currentPath.push(target);
-    currentDir = "/" + currentPath.join("/");
-    updatePrompt();
-    saveSession();
   }
 
   async function doCat(file) {
     if (!file) { werr("cat: argumento obrigatório\n"); return; }
 
-    if (useApiSource) {
-      try {
-        const filePath = (currentDir === '/' ? '' : currentDir.replace(/^\//, '') + '/') + file;
-        const cleanPath = filePath.replace(/\/+/g, '/').replace(/^\//, '');
-        const result = await window.apiReadFile(cleanPath);
-        
-        if (result.success && result.data) {
-          w(result.data.content + (result.data.content.endsWith("\n") ? "" : "\n"));
-        } else {
-          werr(`cat: ${file}: ${result.error || 'erro ao ler'}\n`);
-        }
-      } catch (e) {
-        werr(`cat: ${file}: ${e.message}\n`);
+    if (!window.API_CONFIG.ready) {
+      werr('cat: requer API ativa\n');
+      return;
+    }
+
+    try {
+      const filePath = (currentDir === '/' ? '' : currentDir.replace(/^\//, '') + '/') + file;
+      const cleanPath = filePath.replace(/\/+/g, '/').replace(/^\//, '');
+      const result = await window.apiReadFile(cleanPath);
+      
+      if (result.success && result.data) {
+        w(result.data.content + (result.data.content.endsWith("\n") ? "" : "\n"));
+      } else {
+        werr(`cat: ${file}: ${result.error || 'erro ao ler'}\n`);
       }
-      return;
+    } catch (e) {
+      werr(`cat: ${file}: ${e.message}\n`);
     }
-
-    refreshFilesystem();
-
-    let targetPath = [...currentPath];
-    if (file.startsWith("/")) {
-      targetPath = file.split("/").filter(s => s);
-    } else {
-      targetPath.push(file);
-    }
-
-    const dirPath = targetPath.slice(0, -1);
-    const fileName = targetPath[targetPath.length - 1];
-
-    let node = fileTree;
-    for (const seg of dirPath) {
-      if (!node.children || !node.children[seg] || node.children[seg].type !== "dir") {
-        werr(`cat: ${file}: diretório não encontrado\n`);
-        return;
-      }
-      node = node.children[seg];
-    }
-
-    if (!node.children || !node.children[fileName]) {
-      werr(`cat: ${file}: arquivo não encontrado\n`);
-      return;
-    }
-
-    const child = node.children[fileName];
-    if (child.type !== "file") {
-      werr(`cat: ${file}: é um diretório\n`);
-      return;
-    }
-
-    const content = child.content || "";
-    w(content + (content.endsWith("\n") ? "" : "\n"));
   }
 
   function doPwd() {
@@ -707,77 +586,43 @@
   }
 
   async function doTree() {
-    if (useApiSource) {
-      w(currentDir + "\n");
-      try {
-        async function printApiTree(path, prefix, isLast) {
-          const displayPath = path.replace(/^\//, '');
-          const result = await window.apiListFolder(displayPath || '');
-          
-          if (result.success && result.data && result.data.items) {
-            const items = result.data.items;
-            for (let i = 0; i < items.length; i++) {
-              const item = items[i];
-              const itemIsLast = i === items.length - 1;
-              const connector = itemIsLast ? "└── " : "├── ";
-              
-              if (path === '/') {
-                whtml(`${connector}<span class="${item.type === 'folder' ? 'ls-dir' : 'ls-file'}">${esc(item.name)}${item.type === 'folder' ? '/' : ''}</span>\n`);
-              } else {
-                whtml(`${prefix}${connector}<span class="${item.type === 'folder' ? 'ls-dir' : 'ls-file'}">${esc(item.name)}${item.type === 'folder' ? '/' : ''}</span>\n`);
-              }
-              
-              if (item.type === 'folder') {
-                const newPrefix = path === '/' ? 
-                  (itemIsLast ? "    " : "│   ") : 
-                  prefix + (itemIsLast ? "    " : "│   ");
-                await printApiTree(path + (path === '/' ? '' : '/') + item.name, newPrefix, itemIsLast);
-              }
-            }
-          }
-        }
-        
-        await printApiTree('/', '', true);
-      } catch (e) {
-        werr(`tree: ${e.message}\n`);
-      }
+    if (!window.API_CONFIG.ready) {
+      werr('tree: requer API ativa\n');
       return;
     }
 
-    refreshFilesystem();
-
-    function printNode(node, name, prefix, isLast) {
-      if (name !== undefined) {
-        const connector = isLast ? "└── " : "├── ";
-        if (node.type === "dir") {
-          whtml(`${prefix}${connector}<span class="ls-dir">${esc(name)}/</span>\n`);
-        } else {
-          const ext = name.split(".").pop();
-          const isScript = ["js", "sh", "py", "rb"].includes(ext || "");
-          whtml(
-            `${prefix}${connector}` +
-            (isScript 
-              ? `<span class="ls-exe">${esc(name)}*</span>` 
-              : `<span class="ls-file">${esc(name)}</span>`) +
-            `\n`
-          );
+    w(currentDir + "\n");
+    try {
+      async function printApiTree(path, prefix, isLast) {
+        const displayPath = path.replace(/^\//, '');
+        const result = await window.apiListFolder(displayPath || '');
+        
+        if (result.success && result.data && result.data.items) {
+          const items = result.data.items;
+          for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const itemIsLast = i === items.length - 1;
+            const connector = itemIsLast ? "└── " : "├── ";
+            
+            if (path === '/') {
+              whtml(`${connector}<span class="${item.type === 'folder' ? 'ls-dir' : 'ls-file'}">${esc(item.name)}${item.type === 'folder' ? '/' : ''}</span>\n`);
+            } else {
+              whtml(`${prefix}${connector}<span class="${item.type === 'folder' ? 'ls-dir' : 'ls-file'}">${esc(item.name)}${item.type === 'folder' ? '/' : ''}</span>\n`);
+            }
+            
+            if (item.type === 'folder') {
+              const newPrefix = path === '/' ? 
+                (itemIsLast ? "    " : "│   ") : 
+                prefix + (itemIsLast ? "    " : "│   ");
+              await printApiTree(path + (path === '/' ? '' : '/') + item.name, newPrefix, itemIsLast);
+            }
+          }
         }
       }
-
-      if (node.type === "dir" && node.children) {
-        const entries = Object.entries(node.children).sort(([a], [b]) => a.localeCompare(b));
-        const newPrefix = name === undefined ? "" : prefix + (isLast ? "    " : "│   ");
-
-        entries.forEach(([childName, childNode], index) => {
-          printNode(childNode, childName, newPrefix, index === entries.length - 1);
-        });
-      }
-    }
-
-    w(currentDir + "\n");
-    const node = getCurrentNode();
-    if (node) {
-      printNode(node, undefined, "", true);
+      
+      await printApiTree('/', '', true);
+    } catch (e) {
+      werr(`tree: ${e.message}\n`);
     }
   }
 
