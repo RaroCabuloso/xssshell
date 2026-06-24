@@ -233,19 +233,8 @@
         whtml(`\n<span style="color:#66ff99">✓ Ambiente configurado com sucesso!</span>\n`);
         whtml(`<span style="color:#888">Método: ${method}</span>\n\n`);
       } else {
-        whtml(`\n<span style="color:#ffcc44">⚠ Modo offline - Sem conexão com a API</span>\n`);
-        whtml(`<span style="color:#888">Usando sistema de arquivos local</span>\n\n`);
-        useApiSource = false;
-      }
-    }
-
-    await sleep(1500);
-    
-    // Continua para o login
-    showLoginScreen();
-  }
-
-  // ── Tela de Login ──────────────────────────────────────────────────────────
+        whtml(`\n<span style="color:#ff4444">✗ API indisponível. Recarregue a página para tentar novamente.</span>\n`);
+        return;
 
   function showLoginScreen() {
     document.querySelector(".prompt-top").style.display = "none";
@@ -276,7 +265,7 @@
           </pre>
           <h2 style="color: #00ccff; margin: 10px 0; font-family: inherit; text-shadow: 0 0 10px rgba(0,204,255,0.3);">Sharp Shell Login</h2>
           <p style="color: #888; font-family: inherit;">localhost | tty1</p>
-          ${window.API_CONFIG.ready ? '<p style="color: #66ff99; font-size: 12px; margin-top: 5px;">🔗 API conectada</p>' : '<p style="color: #ffcc44; font-size: 12px; margin-top: 5px;">📡 Modo offline</p>'}
+          <p style="color: #66ff99; font-size: 12px; margin-top: 5px;">🔗 API conectada</p>
         </div>
         
         <div id="loginBox" style="
@@ -288,46 +277,8 @@
           animation: slideUp 0.8s ease-out;
           backdrop-filter: blur(5px);
         ">
-          ${window.API_CONFIG.ready ? `
           <div style="margin-bottom: 15px;">
             <label style="color: #888; display: block; margin-bottom: 5px;">API Username:</label>
-            <input id="apiUser" type="text" autocomplete="off" spellcheck="false" style="
-              background: #0d0d0d;
-              border: 1px solid #333;
-              color: #00ccff;
-              padding: 8px 12px;
-              width: 100%;
-              font-family: inherit;
-              font-size: 14px;
-              outline: none;
-              caret-color: #00ccff;
-              transition: border-color 0.3s;
-            " placeholder="raro"
-            onfocus="this.style.borderColor='#00ccff'"
-            onblur="this.style.borderColor='#333'">
-          </div>
-          
-          <div style="margin-bottom: 15px;">
-            <label style="color: #888; display: block; margin-bottom: 5px;">API Password:</label>
-            <input id="apiPassword" type="password" autocomplete="off" spellcheck="false" style="
-              background: #0d0d0d;
-              border: 1px solid #333;
-              color: #00ccff;
-              padding: 8px 12px;
-              width: 100%;
-              font-family: inherit;
-              font-size: 14px;
-              outline: none;
-              caret-color: #00ccff;
-              transition: border-color 0.3s;
-            " placeholder="••••••"
-            onfocus="this.style.borderColor='#00ccff'"
-            onblur="this.style.borderColor='#333'">
-          </div>
-          ` : ''}
-          
-          <div style="margin-bottom: 15px;">
-            <label style="color: #888; display: block; margin-bottom: 5px;">Usuário Local:</label>
             <input id="loginUser" type="text" autocomplete="off" spellcheck="false" style="
               background: #0d0d0d;
               border: 1px solid #333;
@@ -345,7 +296,7 @@
           </div>
           
           <div style="margin-bottom: 15px;">
-            <label style="color: #888; display: block; margin-bottom: 5px;">Senha Local:</label>
+            <label style="color: #888; display: block; margin-bottom: 5px;">API Password:</label>
             <input id="loginPassword" type="password" autocomplete="off" spellcheck="false" style="
               background: #0d0d0d;
               border: 1px solid #333;
@@ -394,7 +345,7 @@
           </button>
           
           <p style="color: #555; font-size: 11px; margin-top: 15px; text-align: center;">
-            ${window.API_CONFIG.ready ? 'Login local: "raro" sem senha<br>API: suas credenciais do Netlify' : 'Dica: usuário "raro" sem senha'}
+            Use suas credenciais da API Netlify para autenticar.
           </p>
         </div>
       </div>
@@ -410,43 +361,39 @@
     async function attemptLogin() {
       const user = loginUser.value.trim();
       const pass = loginPassword.value;
-      const apiUser = document.getElementById("apiUser")?.value.trim();
-      const apiPass = document.getElementById("apiPassword")?.value;
 
       loginError.style.display = "none";
       loginLoading.style.display = "none";
 
-      // Validação login local
-      const localValid = (user === "raro" && pass === "") || 
-                         (user === "root" && pass === "toor");
-
-      if (!localValid) {
+      if (!user || !pass) {
+        loginError.textContent = "Usuário e senha são obrigatórios.";
         loginError.style.display = "block";
         loginError.style.animation = "none";
         loginError.offsetHeight;
         loginError.style.animation = "shake 0.4s ease-in-out";
+        loginPassword.focus();
+        return;
+      }
+
+      if (!window.API_CONFIG.ready) {
+        loginError.textContent = "API não está disponível no momento.";
+        loginError.style.display = "block";
+        return;
+      }
+
+      loginLoading.style.display = "block";
+      const apiResult = await window.apiLogin(user, pass);
+      loginLoading.style.display = "none";
+
+      if (!apiResult.success) {
+        loginError.textContent = apiResult.error || 'Falha na autenticação';
+        loginError.style.display = "block";
         loginPassword.value = "";
         loginPassword.focus();
         return;
       }
 
-      // Se API está disponível, tenta autenticar
-      if (window.API_CONFIG.ready && apiUser && apiPass) {
-        loginLoading.style.display = "block";
-        
-        const apiResult = await window.apiLogin(apiUser, apiPass);
-        
-        if (apiResult.success) {
-          useApiSource = true;
-          loginLoading.style.display = "none";
-        } else {
-          loginLoading.style.display = "none";
-          whtml(`<span style="color:#ffcc44">⚠ API: ${apiResult.error || 'Falha na autenticação'}</span>\n`);
-          useApiSource = false;
-        }
-      }
-
-      // Continua com login
+      useApiSource = true;
       hideLoginScreen();
       isLoggedIn = true;
       output.style.display = "";
@@ -457,11 +404,10 @@
       document.querySelector(".prompt-top").style.animation = "fadeIn 0.5s ease-in-out";
       document.querySelector(".input-line").style.animation = "fadeIn 0.5s ease-in-out";
 
-      const sourceLabel = useApiSource ? "API (Telegram)" : "Storage Local";
       whtml(
         `<span style="color:#00ccff">Bem-vindo de volta, ${esc(user)}!</span>\n` +
         `<span style="color:#555">Último login: ${new Date().toLocaleString()}</span>\n` +
-        `<span style="color:#888">Fonte: ${sourceLabel} · ${Object.keys(commands).length} comandos</span>\n\n`
+        `<span style="color:#888">Fonte: API (Telegram) · ${Object.keys(commands).length} comandos</span>\n\n`
       );
 
       saveSession();
@@ -497,9 +443,11 @@
   // ── comandos de filesystem (modo local) ────────────────────────────────────
 
   async function doMount() {
-    refreshFilesystem();
+      if (!useApiSource || !window.API_CONFIG.ready) {
+        werr('Storage não suportado. Faça login na API.\n');
+        return;
+      }
 
-    if (useApiSource) {
       w(`Storage: API Raro (Telegram)\n`);
       w(`Endpoint: ${window.API_CONFIG.baseUrl}\n`);
       w(`Método: ${window.API_CONFIG.method}\n`);
@@ -516,23 +464,6 @@
       } catch (e) {
         werr(`Erro ao listar API: ${e.message}\n`);
       }
-      return;
-    }
-
-    if (!FILES || !Array.isArray(FILES)) {
-      werr("mount: FILES não disponível\n");
-      return;
-    }
-
-    w(`Storage montado: ${FILES.length} arquivo(s) no total\n`);
-
-    const rootNode = fileTree;
-    if (rootNode && rootNode.children) {
-      const items = Object.entries(rootNode.children);
-      const dirCount = items.filter(([, c]) => c.type === "dir").length;
-      const fileCount = items.filter(([, c]) => c.type === "file").length;
-      w(`Raiz (/): ${dirCount} diretório(s), ${fileCount} arquivo(s)\n`);
-    }
   }
 
   async function doLs(args) {
@@ -1204,7 +1135,7 @@
           window.API_CONFIG.ready = true;
         } else {
           useApiSource = false;
-          whtml(`<span style="color:#ffcc44">⚠ Sessão API perdida, mude para modo local</span>\n\n`);
+          whtml(`<span style="color:#ffcc44">⚠ Sessão API perdida. Faça login novamente.</span>\n\n`);
         }
       }
     }, 500);
