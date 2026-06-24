@@ -142,7 +142,7 @@
 
   function saveSession() {
     localStorage.setItem("sharpShell_session", JSON.stringify({
-      isLoggedIn: true,
+      isLoggedIn: isLoggedIn,
       currentPath: currentPath,
       currentDir: currentDir,
       useApiSource: useApiSource,
@@ -230,11 +230,18 @@
 
       if (method) {
         window.API_CONFIG.method = method;
+        window.API_CONFIG.ready = true;
+        useApiSource = true;
         whtml(`\n<span style="color:#66ff99">✓ Ambiente configurado com sucesso!</span>\n`);
         whtml(`<span style="color:#888">Método: ${method}</span>\n\n`);
       } else {
         whtml(`\n<span style="color:#ff4444">✗ API indisponível. Recarregue a página para tentar novamente.</span>\n`);
         return;
+      }
+    }
+
+    showLoginScreen();
+  }
 
   function showLoginScreen() {
     document.querySelector(".prompt-top").style.display = "none";
@@ -629,10 +636,11 @@
   // ── Comando Logout ─────────────────────────────────────────────────────────
 
   async function doLogout() {
-    saveSession();
+    clearSession();
+    window.API_CONFIG.token = null;
+    window.API_CONFIG.method = null;
+    window.API_CONFIG.ready = false;
 
-    w("Salvando sessão...\n");
-    await new Promise(resolve => setTimeout(resolve, 300));
     w("Encerrando sessão...\n");
     await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -929,16 +937,25 @@
   // ── boot ───────────────────────────────────────────────────────────────────
 
   refreshFilesystem();
+  loadCommands();
 
   // Verifica sessão salva
   const savedSession = loadSession();
+  const savedToken = localStorage.getItem("api_token");
+  const savedMethod = localStorage.getItem("api_method");
+  const hasSavedApiSession = savedSession && savedSession.isLoggedIn && savedSession.useApiSource && savedToken && savedMethod;
 
-  if (savedSession && savedSession.isLoggedIn) {
-    // Restaura sessão
-    isLoggedIn = true;
-    currentPath = savedSession.currentPath || [];
-    currentDir = savedSession.currentDir || "/";
-    useApiSource = savedSession.useApiSource || false;
+  if (hasSavedApiSession) {
+    window.API_CONFIG.token = savedToken;
+    window.API_CONFIG.method = savedMethod;
+    window.API_CONFIG.ready = true;
+    useApiSource = true;
+
+    // Valida sessão API antes de restaurar o usuário
+    window.apiListFolder('').then(() => {
+      isLoggedIn = true;
+      currentPath = savedSession.currentPath || [];
+      currentDir = savedSession.currentDir || "/";
 
     // Mostra boot rápido
     output.style.display = "";
@@ -984,9 +1001,13 @@
         }
       }
     }, 500);
+  }).catch(() => {
+      clearSession();
+      window.API_CONFIG.ready = false;
+      useApiSource = false;
+      showEnvironmentSetup();
+  });
   } else {
-    // Carrega comandos e inicia com tela de configuração
-    loadCommands();
     showEnvironmentSetup();
   }
 
