@@ -716,7 +716,7 @@
             `  <span class="p-arrow">logout</span>           salvar sessão e sair\n` +
             (modularCommands.length > 0 ? `\n<span style="color:#00ccff">Comandos Modulares:</span>\n${modularList}` : "") +
             `<span class="p-line1">─────────────────────────────────────────</span>\n` +
-            `<span class="warn">Dica: use ↑↓ para histórico · Fonte: ${useApiSource ? 'API' : 'Local'} · ${Object.keys(commands).length} modulares</span>\n`
+            `<span class="warn">Dica: use ↑↓ para histórico · Fonte: API · ${Object.keys(commands).length} modulares</span>\n`
           );
           break;
 
