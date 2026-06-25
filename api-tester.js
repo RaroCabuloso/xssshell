@@ -285,23 +285,65 @@ async function apiRequest(endpoint, options = {}) {
 async function apiLogin(username, password) {
   const body = { username, password };
   
-  try {
-    const data = await testFetch(API_CONFIG.baseUrl + '/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+  if (!API_CONFIG.method) {
+    API_CONFIG.method = 'fetch_post';
+  }
 
-    const result = await data.json();
+  try {
+    let response;
+    const url = API_CONFIG.baseUrl + '/api/auth/login';
+
+    if (API_CONFIG.method.startsWith('fetch')) {
+      response = await testFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+    } else if (API_CONFIG.method.startsWith('xhr')) {
+      response = await new Promise((resolve, reject) => {
+        try {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', url, true);
+          xhr.timeout = 10000;
+          xhr.setRequestHeader('Content-Type', 'application/json');
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve({
+                ok: true,
+                status: xhr.status,
+                json: () => Promise.resolve(JSON.parse(xhr.responseText)),
+                text: () => Promise.resolve(xhr.responseText)
+              });
+            } else {
+              resolve({
+                ok: false,
+                status: xhr.status,
+                json: () => Promise.resolve(JSON.parse(xhr.responseText)),
+                text: () => Promise.resolve(xhr.responseText)
+              });
+            }
+          };
+          xhr.onerror = () => reject(new Error('XHR error'));
+          xhr.ontimeout = () => reject(new Error('XHR timeout'));
+          xhr.send(JSON.stringify(body));
+        } catch (e) {
+          reject(new Error(`XHR failed: ${e.message}`));
+        }
+      });
+    } else {
+      response = await testFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+    }
+
+    const result = await response.json();
     
     if (result.success && result.data && result.data.token) {
       API_CONFIG.token = result.data.token;
       API_CONFIG.ready = true;
       useApi = true;
-      
-      // Salva token no localStorage (opcional, para persistir sessão)
-      localStorage.setItem('api_token', result.data.token);
-      localStorage.setItem('api_method', API_CONFIG.method);
       
       return { success: true, token: result.data.token };
     } else {

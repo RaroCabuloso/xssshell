@@ -163,10 +163,187 @@
     return null;
   }
 
+  function setCookie(name, value, days = 7) {
+    const expires = new Date(Date.now() + days * 864e5).toUTCString();
+    document.cookie = `${name}=${encodeURIComponent(value)}; path=/; expires=${expires}; SameSite=Lax`;
+  }
+
+  function getCookie(name) {
+    return document.cookie.split('; ').reduce((acc, cookie) => {
+      const [key, val] = cookie.split('=');
+      if (key === name) return decodeURIComponent(val || '');
+      return acc;
+    }, '');
+  }
+
+  function deleteCookie(name) {
+    document.cookie = `${name}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
+  }
+
+  function isMobileDevice() {
+    return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  }
+
+  function openProgramWindow(title, htmlContent, options = {}) {
+    const isMobile = isMobileDevice();
+    const windowId = `app-window-${Date.now()}`;
+
+    const sharedStyle = `
+      body { margin: 0; min-height: 100vh; background: #090909; color: #cdf781; font-family: monospace; }
+      .app-window-header { position: relative; background: #040404; border-bottom: 1px solid #335533; color: #cdf781; padding: 12px 16px; font-size: 14px; }
+      .app-window-close { position: absolute; right: 16px; top: 12px; border: none; background: transparent; color: #ff6b6b; font-size: 18px; cursor: pointer; }
+      .app-window-content { padding: 14px; }
+      .app-window-button { border: 1px solid #5f9f5f; background: rgba(95,159,95,0.1); color: #cdf781; padding: 10px 14px; cursor: pointer; margin-right: 8px; }
+      .app-window-button:hover { background: rgba(95,159,95,0.2); }
+      textarea { width: 100%; min-height: 360px; background: #040404; border: 1px solid #224422; color: #cdf781; padding: 12px; font-family: monospace; font-size: 13px; line-height: 1.4; resize: vertical; }
+      .app-status { margin-top: 12px; color: #88ff88; font-size: 13px; }
+    `;
+
+    if (!isMobile) {
+      const win = window.open('about:blank', windowId, 'width=920,height=620,resizable=yes,scrollbars=yes');
+      if (!win) {
+        alert('Falha ao abrir janela. Desative o bloqueador de pop-ups.');
+        return null;
+      }
+
+      win.document.write(`<!DOCTYPE html><html><head><title>${title}</title><style>${sharedStyle}</style></head><body><div class="app-window-header">${title}<button id="appClose" class="app-window-close">×</button></div><div class="app-window-content">${htmlContent}</div></body></html>`);
+      win.document.close();
+      win.document.getElementById('appClose')?.addEventListener('click', () => win.close());
+      if (typeof options.onReady === 'function') {
+        setTimeout(() => options.onReady(win), 150);
+      }
+      return win;
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'app-modal';
+    modal.innerHTML = `
+      <div class="app-window" id="${windowId}">
+        <div class="app-window-header">
+          <span class="app-window-title">${title}</span>
+          <button class="app-window-close" type="button">×</button>
+        </div>
+        <div class="app-window-content">${htmlContent}</div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+    const windowEl = modal.querySelector('.app-window');
+    const closeButton = modal.querySelector('.app-window-close');
+    const header = modal.querySelector('.app-window-header');
+
+    const focusModal = () => { modal.style.display = 'flex'; };
+    focusModal();
+
+    closeButton?.addEventListener('click', () => modal.remove());
+
+    let dragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    header?.addEventListener('pointerdown', (event) => {
+      dragging = true;
+      offsetX = event.clientX - (windowEl?.getBoundingClientRect().left || 0);
+      offsetY = event.clientY - (windowEl?.getBoundingClientRect().top || 0);
+      header.setPointerCapture(event.pointerId);
+    });
+
+    header?.addEventListener('pointermove', (event) => {
+      if (!dragging) return;
+      windowEl.style.left = `${event.clientX - offsetX}px`;
+      windowEl.style.top = `${event.clientY - offsetY}px`;
+      windowEl.style.position = 'fixed';
+    });
+
+    header?.addEventListener('pointerup', (event) => {
+      dragging = false;
+      header.releasePointerCapture(event.pointerId);
+    });
+
+    if (typeof options.onReady === 'function') {
+      setTimeout(() => options.onReady(modal), 150);
+    }
+
+    return modal;
+  }
+
+  async function openEditorWindow(filePath) {
+    const normalizedPath = filePath.startsWith('/') ? filePath.slice(1) : (currentDir === '/' ? filePath : currentDir.replace(/^\//, '') + '/' + filePath);
+    const title = `nano - ${filePath}`;
+    const contentHtml = `
+      <div>
+        <div style="margin-bottom: 10px; color: #88ff88;">Editando: ${esc(normalizedPath)}</div>
+        <textarea id="nanoEditor"></textarea>
+        <div style="margin-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <button id="nanoSave" class="app-window-button">Salvar</button>
+          <button id="nanoClose" class="app-window-button">Fechar</button>
+          <span id="nanoStatus" class="app-status"></span>
+        </div>
+      </div>
+    `;
+
+    const instance = openProgramWindow(title, contentHtml, {
+      onReady: async (container) => {
+        const doc = container.document || container;
+        const textarea = doc.getElementById('nanoEditor');
+        const saveButton = doc.getElementById('nanoSave');
+        const closeButton = doc.getElementById('nanoClose');
+        const status = doc.getElementById('nanoStatus');
+
+        async function loadContent() {
+          status.textContent = 'Carregando...';
+          try {
+            const result = await window.apiReadFile(normalizedPath);
+            if (result.success && result.data) {
+              textarea.value = result.data.content || '';
+              status.textContent = 'Arquivo carregado.';
+            } else {
+              textarea.value = '';
+              status.textContent = 'Arquivo novo ou não encontrado.';
+            }
+          } catch (e) {
+            textarea.value = '';
+            status.textContent = 'Erro ao carregar arquivo.';
+          }
+        }
+
+        async function saveFile() {
+          status.textContent = 'Salvando...';
+          try {
+            let result = await window.apiUpdateFile(normalizedPath, textarea.value);
+            if (!result.success) {
+              result = await window.apiCreateFile(normalizedPath, textarea.value);
+            }
+            if (result && result.success) {
+              status.textContent = 'Salvo com sucesso.';
+            } else {
+              status.textContent = `Erro: ${result?.error || 'falha ao salvar'}`;
+            }
+          } catch (e) {
+            status.textContent = 'Erro ao salvar arquivo.';
+          }
+        }
+
+        saveButton?.addEventListener('click', saveFile);
+        closeButton?.addEventListener('click', () => {
+          if (container.close) return container.close();
+          container.remove();
+        });
+
+        await loadContent();
+      }
+    });
+
+    if (!instance) {
+      werr('nano: falha ao abrir editor.
+');
+    }
+  }
+
   function clearSession() {
     localStorage.removeItem("sharpShell_session");
-    localStorage.removeItem("api_token");
-    localStorage.removeItem("api_method");
+    deleteCookie("api_token");
+    deleteCookie("api_method");
   }
 
   // ── Tela de Configuração de Ambiente ───────────────────────────────────────
@@ -196,8 +373,8 @@
     await sleep(800);
 
     // Restaura método salvo se existir
-    const savedMethod = localStorage.getItem("api_method");
-    const savedToken = localStorage.getItem("api_token");
+    const savedMethod = getCookie("api_method");
+    const savedToken = getCookie("api_token");
     
     if (savedMethod && savedToken) {
       whtml(`<span style="color:#888">Método salvo encontrado: ${savedMethod}</span>\n`);
@@ -382,12 +559,6 @@
         return;
       }
 
-      if (!window.API_CONFIG.ready) {
-        loginError.textContent = "API não está disponível no momento.";
-        loginError.style.display = "block";
-        return;
-      }
-
       loginLoading.style.display = "block";
       const apiResult = await window.apiLogin(user, pass);
       loginLoading.style.display = "none";
@@ -398,6 +569,11 @@
         loginPassword.value = "";
         loginPassword.focus();
         return;
+      }
+
+      setCookie('api_token', apiResult.token, 7);
+      if (window.API_CONFIG.method) {
+        setCookie('api_method', window.API_CONFIG.method, 365);
       }
 
       useApiSource = true;
@@ -883,6 +1059,19 @@
           }
           break;
 
+        case "nano": {
+          const rawArgs = args.slice(1);
+          const verbose = rawArgs.includes('-v');
+          const fileArg = rawArgs.filter(a => a !== '-v')[0];
+          if (!fileArg) {
+            werr('nano: arquivo obrigatório\n');
+            w('Uso: nano [-v] arquivo\n');
+            break;
+          }
+          await openEditorWindow(fileArg);
+          break;
+        }
+
         case "logout":
         case "exit":
         case "sair":
@@ -941,8 +1130,8 @@
 
   // Verifica sessão salva
   const savedSession = loadSession();
-  const savedToken = localStorage.getItem("api_token");
-  const savedMethod = localStorage.getItem("api_method");
+  const savedToken = getCookie("api_token");
+  const savedMethod = getCookie("api_method");
   const hasSavedApiSession = savedSession && savedSession.isLoggedIn && savedSession.useApiSource && savedToken && savedMethod;
 
   if (hasSavedApiSession) {
@@ -989,8 +1178,8 @@
 
       // Verifica API se estava usando
       if (useApiSource) {
-        const savedToken = localStorage.getItem("api_token");
-        const savedMethod = localStorage.getItem("api_method");
+        const savedToken = getCookie("api_token");
+        const savedMethod = getCookie("api_method");
         if (savedToken && savedMethod) {
           window.API_CONFIG.token = savedToken;
           window.API_CONFIG.method = savedMethod;
