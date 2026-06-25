@@ -19,6 +19,8 @@
 
   // ── Sistema de comandos modulares ──────────────────────────────────────────
   const commands = {};
+  const customCommandRegistryKey = "sharpShell_custom_commands";
+  let customCommandRegistry = [];
 
   function buildTreeFromFiles(fileList) {
     const root = { type: "dir", children: {} };
@@ -59,6 +61,39 @@
     fileTree = buildTreeFromFiles(FILES);
   }
 
+  function createCommandModule(source) {
+    const body = String(source || '').trim();
+    return new Function('ctx', 'input', `return (async () => { ${body} })();`);
+  }
+
+  async function executeCommandModule(commandModule, ctx) {
+    if (typeof commandModule !== 'function') return null;
+
+    const subcommands = new Map();
+
+    ctx.addSubcommand = function (name, handler) {
+      if (typeof handler === 'function') {
+        subcommands.set(String(name || '').trim(), handler);
+      }
+      return ctx;
+    };
+
+    ctx.runSubcommand = async function (name, args = []) {
+      const handler = subcommands.get(String(name || '').trim());
+      if (typeof handler !== 'function') return null;
+      return await handler(ctx, Array.isArray(args) ? args : [args]);
+    };
+
+    const result = await commandModule(ctx, (promptText = '') => requestTerminalInput(promptText));
+
+    const firstArg = Array.isArray(ctx.args) ? ctx.args[0] : null;
+    if (firstArg && subcommands.has(String(firstArg))) {
+      return await ctx.runSubcommand(firstArg, ctx.args.slice(1));
+    }
+
+    return result;
+  }
+
   // ── Carregamento automático de comandos ────────────────────────────────────
 
   function loadCommands() {
@@ -69,7 +104,7 @@
     for (const file of commandFiles) {
       try {
         const fileName = file.name.replace("commands/", "").replace(".js", "");
-        const commandModule = new Function('ctx', file.content);
+        const commandModule = createCommandModule(file.content);
         commands[fileName] = commandModule;
         console.log(`[CommandLoader] ✓ Comando carregado: ${fileName}`);
       } catch (error) {
@@ -80,10 +115,215 @@
     console.log(`[CommandLoader] Total: ${Object.keys(commands).length} comandos registrados`);
   }
 
+  function loadCustomCommandRegistry() {
+    try {
+      const saved = localStorage.getItem(customCommandRegistryKey);
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.warn('[CommandLoader] Falha ao carregar registry persistido:', error);
+      return [];
+    }
+  }
+
+  function saveCustomCommandRegistry() {
+    localStorage.setItem(customCommandRegistryKey, JSON.stringify(customCommandRegistry));
+  }
+
+  function normalizeCommandSource(source) {
+    const raw = String(source || '').trim();
+    if (!raw) return raw;
+
+    const objectMatch = raw.match(/content\s*:\s*`/);
+    if (!objectMatch) return raw;
+
+    const markerIndex = raw.indexOf('`', objectMatch.index + objectMatch[0].length - 1);
+    if (markerIndex < 0) return raw;
+
+    let cursor = markerIndex + 1;
+    let escaped = false;
+    while (cursor < raw.length) {
+      const char = raw[cursor];
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '`') {
+        return raw.slice(markerIndex + 1, cursor);
+      }
+      cursor += 1;
+    }
+
+    return raw;
+  }
+
+  function normalizeFSPath(inputPath) {
+    const raw = String(inputPath || '').trim();
+    if (!raw) return '';
+    if (raw.startsWith('/')) return raw.replace(/^\/+/, '');
+    if (raw.startsWith('./')) return raw.slice(2);
+    if (raw.includes('/')) {
+      const parts = raw.split('/').filter(Boolean);
+      const first = parts[0];
+      if (first === '.' || first === '..') {
+        return parts.join('/');
+      }
+    }
+    if (currentDir === '/') return raw;
+    return `${currentDir.replace(/^\/+|\/+$/g, '')}/${raw}`.replace(/\/+/g, '/');
+  }
+
+  function resolveShellPath(filePath) {
+    const raw = String(filePath || '').trim();
+    if (!raw) return '';
+    const withoutLeadingSlash = raw.startsWith('/') ? raw.slice(1) : raw;
+    if (withoutLeadingSlash.startsWith('./')) {
+      return normalizePath(withoutLeadingSlash.slice(2));
+    }
+    if (currentDir === '/') {
+      return normalizePath(withoutLeadingSlash);
+    }
+    return normalizePath(`${currentDir.replace(/^\/+|\/+$/g, '')}/${withoutLeadingSlash}`);
+  }
+
+  function getFileEntryFromList(path) {
+    const normalizedPath = normalizePath(path);
+    return FILES.find(file => normalizePath(file.name) === normalizedPath) || null;
+  }
+
+  async function registerCommandFromFile(inputPath, options = {}) {
+    const resolvedPath = normalizeFSPath(inputPath);
+    const content = await readFileContent(resolvedPath);
+    if (!content) {
+      throw new Error(`arquivo não encontrado ou vazio: ${inputPath}`);
+    }
+
+    const commandName = options.name || resolvedPath.split('/').pop().replace(/\.js$/i, '');
+    if (!/^[a-zA-Z0-9_-]+$/.test(commandName)) {
+      throw new Error('nome de comando inválido');
+    }
+
+    const normalizedContent = normalizeCommandSource(content);
+    const existingIndex = customCommandRegistry.findIndex(entry => entry.name === commandName);
+    const entry = { name: commandName, path: resolvedPath, content: normalizedContent, createdAt: new Date().toISOString() };
+
+    try {
+      const commandModule = createCommandModule(normalizedContent);
+      commands[commandName] = commandModule;
+    } catch (error) {
+      throw new Error(`conteúdo inválido para o comando: ${error.message}`);
+    }
+
+    if (existingIndex >= 0) {
+      customCommandRegistry[existingIndex] = entry;
+    } else {
+      customCommandRegistry.push(entry);
+    }
+
+    saveCustomCommandRegistry();
+    return entry;
+  }
+
+  async function registerCommandsFromFolder(folderPath) {
+    const resolvedPath = normalizeFSPath(folderPath);
+    let entries = [];
+
+    if (useApiSource && window.API_CONFIG?.ready) {
+      const result = await window.apiListFolder(resolvedPath || '');
+      if (result?.success && Array.isArray(result.data?.items)) {
+        entries = result.data.items
+          .filter(item => item.type === 'file' && item.name.endsWith('.js'))
+          .map(item => ({ name: item.name, path: item.path }));
+      }
+    } else {
+      entries = FILES
+        .filter(file => file.name.startsWith(`${resolvedPath}/`) && file.name.endsWith('.js'))
+        .map(file => ({ name: file.name.split('/').pop(), path: file.name }));
+    }
+
+    if (!entries.length) {
+      throw new Error(`nenhum arquivo .js encontrado em: ${folderPath}`);
+    }
+
+    const registered = [];
+    for (const entry of entries) {
+      const content = await readFileContent(entry.path);
+      if (!content) continue;
+      const commandName = entry.name.replace(/\.js$/i, '');
+      const moduleEntry = await registerCommandFromFile(entry.path, { name: commandName, allowOverwrite: true });
+      registered.push(moduleEntry);
+    }
+
+    return registered;
+  }
+
+  function listCustomCommands() {
+    return customCommandRegistry.slice().sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function removeCustomCommand(commandName) {
+    const target = String(commandName || '').trim();
+    if (!target) return false;
+
+    const index = customCommandRegistry.findIndex(entry => entry.name === target);
+    if (index < 0) return false;
+
+    customCommandRegistry.splice(index, 1);
+    delete commands[target];
+    saveCustomCommandRegistry();
+    return true;
+  }
+
+  async function runScriptFile(inputPath, ctx) {
+    const rawPath = String(inputPath || '').trim();
+    const candidates = [];
+    const direct = normalizeFSPath(rawPath);
+    if (direct) candidates.push(direct);
+    if (!direct.startsWith('/')) candidates.push(`/${direct}`);
+    if (rawPath && !rawPath.startsWith('/')) candidates.push(rawPath);
+    if (rawPath && !rawPath.startsWith('/')) candidates.push(`/${rawPath}`);
+
+    let content = '';
+    let resolvedPath = '';
+    for (const candidate of candidates) {
+      const candidateContent = await readFileContent(candidate);
+      if (candidateContent) {
+        content = candidateContent;
+        resolvedPath = candidate;
+        break;
+      }
+    }
+
+    if (!content) {
+      throw new Error(`script não encontrado: ${inputPath}`);
+    }
+
+    try {
+      const runner = new Function('ctx', 'input', `return (async () => { ${content} })();`);
+      return await runner(ctx, (promptText = "") => requestTerminalInput(promptText));
+    } catch (error) {
+      throw new Error(`erro de sintaxe no script: ${error.message}`);
+    }
+  }
+
+  function restoreCustomCommands() {
+    customCommandRegistry = loadCustomCommandRegistry();
+    for (const entry of customCommandRegistry) {
+      try {
+        commands[entry.name] = createCommandModule(entry.content);
+      } catch (error) {
+        console.warn(`[CommandLoader] Falha ao restaurar comando ${entry.name}:`, error);
+      }
+    }
+  }
+
   // ── command history ────────────────────────────────────────────────────────
   const cmdHistory = [];
   let histIdx = -1;
   let terminalNanoState = null;
+  let pendingInputResolver = null;
+  let pendingInputPrompt = "";
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -137,6 +377,26 @@
       `┌──(<span class="p-user">${esc(USER)}㉿${esc(HOST)}</span>)` +
       `-[<span class="p-path">${esc(currentDir)}</span>]`;
     promptEl.textContent = "└─❯❯ ";
+  }
+
+  function requestTerminalInput(promptText = "") {
+    return new Promise((resolve) => {
+      pendingInputResolver = resolve;
+      pendingInputPrompt = promptText;
+      cmdInput.value = "";
+      cmdInput.placeholder = promptText || "input";
+      cmdInput.focus();
+      if (promptText) {
+        whtml(`<span class="p-arrow">${esc(promptText)}</span>`);
+      }
+      terminal.scrollTop = terminal.scrollHeight;
+    });
+  }
+
+  function clearPendingInput() {
+    pendingInputResolver = null;
+    pendingInputPrompt = "";
+    cmdInput.placeholder = "";
   }
 
   // ── Salvamento de sessão ───────────────────────────────────────────────────
@@ -215,49 +475,125 @@
   }
 
   function normalizePath(path) {
-    return String(path || '').replace(/^\/+/, '').replace(/\/+/g, '/');
+    const raw = String(path || '').trim();
+    if (!raw) return '';
+    return raw.replace(/^\/+/, '').replace(/\/+/g, '/');
   }
 
   function getLocalFileKey(path) {
     return `sharpShell_file:${normalizePath(path)}`;
   }
 
+  function getPathCandidates(inputPath) {
+    const raw = String(inputPath || '').trim();
+    if (!raw) return [];
+
+    const base = normalizePath(raw);
+    const withoutLeading = base.replace(/^\/+/, '');
+    const withLeading = withoutLeading ? `/${withoutLeading}` : '/';
+    const fromCurrent = currentDir === '/'
+      ? withoutLeading
+      : `${currentDir.replace(/^\/+|\/+$/g, '')}/${withoutLeading}`.replace(/\/+/, '/');
+
+    const candidates = new Set([
+      raw,
+      base,
+      withoutLeading,
+      withLeading,
+      normalizePath(withLeading),
+      normalizePath(fromCurrent),
+      normalizePath(`/${fromCurrent}`)
+    ]);
+
+    return Array.from(candidates).filter(Boolean);
+  }
+
   async function readFileContent(path) {
-    const normalizedPath = normalizePath(path);
-    try {
-      if (window.API_CONFIG?.ready && typeof window.apiReadFile === 'function') {
-        const result = await window.apiReadFile(normalizedPath);
-        if (result?.success && result?.data) {
-          return result.data.content || '';
+    const candidates = getPathCandidates(path);
+
+    for (const candidate of candidates) {
+      try {
+        if (window.API_CONFIG?.ready && typeof window.apiReadFile === 'function') {
+          const result = await window.apiReadFile(candidate.startsWith('/') ? candidate : `/${candidate}`);
+          if (result?.success && result?.data) {
+            const content = result.data.content ?? '';
+            if (content !== undefined && content !== null) {
+              return String(content);
+            }
+          }
         }
+      } catch (e) {
+        console.warn('[fs] API read failed, trying local fallback', e);
       }
-    } catch (e) {
-      console.warn('[fs] API read failed, using local storage fallback', e);
     }
-    return localStorage.getItem(getLocalFileKey(normalizedPath)) || '';
+
+    for (const candidate of candidates) {
+      const fromStorage = localStorage.getItem(getLocalFileKey(candidate));
+      if (fromStorage !== null) {
+        return fromStorage;
+      }
+    }
+
+    for (const candidate of candidates) {
+      const entry = getFileEntryFromList(candidate);
+      if (entry?.content !== undefined) {
+        return entry.content;
+      }
+    }
+
+    return '';
   }
 
   async function writeFileContent(path, content) {
-    const normalizedPath = normalizePath(path);
+    const canonicalPath = normalizePath(path);
+    const candidates = getPathCandidates(path);
+    const apiPaths = candidates.map(candidate => candidate.startsWith('/') ? candidate : `/${candidate}`);
+    let usedApi = false;
+
     try {
-      if (window.API_CONFIG?.ready && typeof window.apiUpdateFile === 'function') {
-        const updateResult = await window.apiUpdateFile(normalizedPath, content);
-        if (updateResult?.success) {
-          return { success: true, source: 'api' };
+      if (window.API_CONFIG?.ready && typeof window.apiCreateFile === 'function') {
+        for (const apiPath of apiPaths) {
+          try {
+            const createResult = await window.apiCreateFile(apiPath, content);
+            if (createResult?.success) {
+              usedApi = true;
+              break;
+            }
+          } catch (e) {
+            console.warn('[fs] API create failed for', apiPath, e);
+          }
         }
       }
-      if (window.API_CONFIG?.ready && typeof window.apiCreateFile === 'function') {
-        const createResult = await window.apiCreateFile(normalizedPath, content);
-        if (createResult?.success) {
-          return { success: true, source: 'api' };
+
+      if (!usedApi && window.API_CONFIG?.ready && typeof window.apiUpdateFile === 'function') {
+        for (const apiPath of apiPaths) {
+          try {
+            const updateResult = await window.apiUpdateFile(apiPath, content);
+            if (updateResult?.success) {
+              usedApi = true;
+              break;
+            }
+          } catch (e) {
+            console.warn('[fs] API update failed for', apiPath, e);
+          }
         }
       }
     } catch (e) {
       console.warn('[fs] API write failed, using local storage fallback', e);
     }
 
-    localStorage.setItem(getLocalFileKey(normalizedPath), content);
-    return { success: true, source: 'local' };
+    const entry = getFileEntryFromList(canonicalPath);
+    if (entry) {
+      entry.content = content;
+    } else {
+      FILES.push({ name: canonicalPath, content });
+    }
+
+    for (const candidate of candidates) {
+      localStorage.setItem(getLocalFileKey(candidate), content);
+    }
+
+    return { success: true, source: usedApi ? 'api' : 'local' };
   }
 
   function openProgramWindow(title, htmlContent, options = {}) {
@@ -339,11 +675,11 @@
   }
 
   async function openEditorWindow(filePath, useWindow = false) {
-    const normalizedPath = filePath.startsWith('/') ? filePath.slice(1) : (currentDir === '/' ? filePath : currentDir.replace(/^\//, '') + '/' + filePath);
-    const title = `nano - ${filePath}`;
+    const resolvedPath = resolveShellPath(filePath);
+    const title = `nano - ${resolvedPath}`;
     const contentHtml = `
       <div>
-        <div style="margin-bottom: 10px; color: #88ff88;">Editando: ${esc(normalizedPath)}</div>
+        <div style="margin-bottom: 10px; color: #88ff88;">Editando: ${esc(resolvedPath)}</div>
         <textarea id="nanoEditor"></textarea>
         <div style="margin-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
           <button id="nanoSave" class="app-window-button">Salvar</button>
@@ -354,7 +690,7 @@
     `;
 
     if (!useWindow) {
-      await openTerminalEditor(normalizedPath);
+      await openTerminalEditor(resolvedPath);
       return;
     }
 
@@ -370,7 +706,7 @@
           if (!status || !textarea) return;
           status.textContent = 'Carregando...';
           try {
-            const content = await readFileContent(normalizedPath);
+            const content = await readFileContent(resolvedPath);
             textarea.value = content;
             status.textContent = 'Arquivo carregado.';
           } catch (e) {
@@ -383,7 +719,7 @@
           if (!status || !textarea) return;
           status.textContent = 'Salvando...';
           try {
-            const result = await writeFileContent(normalizedPath, textarea.value);
+            const result = await writeFileContent(resolvedPath, textarea.value);
             if (result?.success) {
               status.textContent = 'Salvo com sucesso.';
             } else {
@@ -410,7 +746,7 @@
   }
 
   async function openTerminalEditor(filePath) {
-    const normalizedPath = normalizePath(filePath.startsWith('/') ? filePath.slice(1) : filePath);
+    const normalizedPath = resolveShellPath(filePath);
     let content = '';
 
     try {
@@ -919,6 +1255,40 @@
     }
   }
 
+  async function moveFileItem(sourcePath, destinationPath) {
+    const source = resolveShellPath(sourcePath);
+    const destination = resolveShellPath(destinationPath);
+    if (!source || !destination) {
+      return { success: false, error: 'origem e destino são obrigatórios' };
+    }
+
+    try {
+      if (useApiSource && window.API_CONFIG?.ready && typeof window.apiMove === 'function') {
+        const result = await window.apiMove(`/${source}`, `/${destination}`);
+        return result?.success ? { success: true } : { success: false, error: result?.error || 'erro ao mover' };
+      }
+
+      const sourceEntry = getFileEntryFromList(source);
+      const sourceContent = sourceEntry?.content ?? localStorage.getItem(getLocalFileKey(source));
+      if (sourceContent === null && !sourceEntry) {
+        return { success: false, error: 'arquivo não encontrado' };
+      }
+
+      const entryIndex = FILES.findIndex(file => normalizePath(file.name) === source);
+      if (entryIndex >= 0) {
+        FILES.splice(entryIndex, 1);
+      }
+      localStorage.removeItem(getLocalFileKey(source));
+
+      const movedEntry = { name: destination, content: sourceContent ?? '' };
+      FILES.push(movedEntry);
+      localStorage.setItem(getLocalFileKey(destination), sourceContent ?? '');
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
   async function doCat(file) {
     if (!file) { werr("cat: argumento obrigatório\n"); return; }
 
@@ -1035,13 +1405,32 @@
       HOST: HOST,
       saveSession: saveSession,
       useApiSource: useApiSource,
-      openEditorWindow: openEditorWindow
+      openEditorWindow: openEditorWindow,
+      input: (promptText = "") => requestTerminalInput(promptText),
+      clear: () => {
+        output.innerHTML = '';
+      },
+      print: (text, color = null, options = {}) => {
+        const value = String(text ?? '');
+        const suffix = options.newline === false ? '' : '\n';
+        const html = color ? `<span style="color:${color}">${esc(value)}</span>${suffix}` : `${esc(value)}${suffix}`;
+        whtml(html);
+      },
+      request: async (url, options = {}) => {
+        const response = await fetch(url, options);
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          return response.json();
+        }
+        return response.text();
+      },
+      window: (title, htmlContent, windowOptions = {}) => openProgramWindow(title, htmlContent, windowOptions)
     };
 
     // Verifica se é um comando modular
     if (commands[cmd]) {
       try {
-        await commands[cmd](ctx);
+        await executeCommandModule(commands[cmd], ctx);
         saveSession();
       } catch (error) {
         werr(`${cmd}: erro ao executar comando\n`);
@@ -1064,6 +1453,7 @@
             `<span style="color:#00ccff">Comandos do Sistema:</span>\n` +
             `  <span class="p-arrow">help</span>             mostra esta ajuda\n` +
             `  <span class="p-arrow">clear</span>            limpar terminal\n` +
+            `  <span class="p-arrow">cmd</span> [new|list|del|run]  gerenciar comandos customizados\n` +
             `  <span class="p-arrow">whoami</span>           usuário atual\n` +
             `  <span class="p-arrow">date</span>             data e hora\n` +
             `  <span class="p-arrow">echo</span> [texto]     ecoar texto\n` +
@@ -1183,11 +1573,11 @@
           break;
 
         case "touch":
-          if (useApiSource && window.API_CONFIG.ready && args[1]) {
+          if (args[1]) {
             try {
               const path = args[1].startsWith('/') ? args[1] : currentDir + (currentDir === '/' ? '' : '/') + args[1];
               const content = args.slice(2).join(" ") || "";
-              const result = await window.apiCreateFile(path, content);
+              const result = await writeFileContent(path, content);
               if (result.success) {
                 w(`Arquivo criado: ${path}\n`);
               } else {
@@ -1197,7 +1587,25 @@
               werr(`touch: ${e.message}\n`);
             }
           } else {
-            werr("touch: requer API ativa e nome do arquivo\n");
+            werr("touch: nome do arquivo obrigatório\n");
+          }
+          break;
+
+        case "mv":
+        case "rename":
+          if (args[1]) {
+            try {
+              const result = await moveFileItem(args[1], args[2] || args[1]);
+              if (result.success) {
+                w(`Movido/renomeado: ${args[1]} -> ${args[2] || args[1]}\n`);
+              } else {
+                werr(`mv: ${result.error || 'erro'}\n`);
+              }
+            } catch (e) {
+              werr(`mv: ${e.message}\n`);
+            }
+          } else {
+            werr("mv: uso: mv <origem> <destino>\n");
           }
           break;
 
@@ -1243,6 +1651,68 @@
           }
           break;
 
+        case "cmd": {
+          const subcommand = args[1];
+          const target = args[2];
+          if (!subcommand) {
+            w('Uso: cmd new <arquivo> | cmd new -p <pasta> | cmd list | cmd del <nome> | cmd run <script>\n');
+            break;
+          }
+
+          try {
+            if (subcommand === 'new') {
+              if (target === '-p') {
+                const folderPath = args[3];
+                if (!folderPath) {
+                  werr('cmd new: informe a pasta\n');
+                  break;
+                }
+                const registered = await registerCommandsFromFolder(folderPath);
+                w(`Comandos registrados: ${registered.map(item => item.name).join(', ')}\n`);
+              } else {
+                if (!target) {
+                  werr('cmd new: arquivo obrigatório\n');
+                  break;
+                }
+                const entry = await registerCommandFromFile(target);
+                w(`Comando registrado: ${entry.name}\n`);
+              }
+            } else if (subcommand === 'list') {
+              const entries = listCustomCommands();
+              if (!entries.length) {
+                w('Nenhum comando customizado registrado.\n');
+              } else {
+                for (const entry of entries) {
+                  w(`${entry.name}  (${entry.path})\n`);
+                }
+              }
+            } else if (subcommand === 'del') {
+              if (!target) {
+                werr('cmd del: nome do comando obrigatório\n');
+                break;
+              }
+              const removed = removeCustomCommand(target);
+              if (removed) {
+                w(`Comando removido: ${target}\n`);
+              } else {
+                werr(`cmd del: comando não encontrado: ${target}\n`);
+              }
+            } else if (subcommand === 'run') {
+              if (!target) {
+                werr('cmd run: script obrigatório\n');
+                break;
+              }
+              await runScriptFile(target, ctx);
+              w('Execução concluída.\n');
+            } else {
+              werr(`cmd: subcomando inválido: ${subcommand}\n`);
+            }
+          } catch (error) {
+            werr(`cmd: ${error.message}\n`);
+          }
+          break;
+        }
+
         case "nano": {
           const rawArgs = args.slice(1);
           const useWindow = rawArgs.includes('-v');
@@ -1285,6 +1755,26 @@
 
   cmdInput.addEventListener("keydown", async function (e) {
     if (!isLoggedIn) return;
+
+    if (pendingInputResolver) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const value = cmdInput.value;
+        cmdInput.value = "";
+        w(`${value}\n`);
+        const resolveInput = pendingInputResolver;
+        clearPendingInput();
+        resolveInput(value);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        cmdInput.value = "";
+        w("\n");
+        const resolveInput = pendingInputResolver;
+        clearPendingInput();
+        resolveInput("");
+      }
+      return;
+    }
 
     if (terminalNanoState) {
       const raw = cmdInput.value;
@@ -1357,6 +1847,7 @@
 
   refreshFilesystem();
   loadCommands();
+  restoreCustomCommands();
 
   // Verifica sessão salva
   const savedSession = loadSession();

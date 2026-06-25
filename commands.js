@@ -111,5 +111,20 @@ ctx.whtml(\`
 
 <span style="color:#555">━━━━━━━━━━━━━━━━━━━━━━━━━━━</span>
 \`);`
+  },
+  {
+    name: "commands/demo_window.js",
+    content: `// Comando: demo_window
+// Uso: demo_window
+// Descrição: Exemplo completo com clear, print colorido, request e window
+
+ctx.clear();
+ctx.print('=== Demo de comando customizado ===', '#00ccff');
+ctx.print('Esse comando foi carregado como um comando do diretório commands.', '#88ff88');
+ctx.print('Fazendo requisição HTTP...', '#ffcc44');
+
+const data = await ctx.request('https://jsonplaceholder.typicode.com/todos/1');
+ctx.print(JSON.stringify(data, null, 2), '#ff99cc');
+ctx.window('Demo Window', '<div style="color:#00ccff">Janela criada pelo comando demo_window.</div>');`
   }
 ];

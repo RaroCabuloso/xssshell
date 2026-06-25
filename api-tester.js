@@ -354,8 +354,16 @@ async function apiLogin(username, password) {
   }
 }
 
+function normalizeApiPath(path = '') {
+  return String(path || '').replace(/^\/+/, '').replace(/\/+$/, '');
+}
+
+function encodeApiPath(path = '') {
+  return encodeURIComponent(normalizeApiPath(path));
+}
+
 async function apiListFolder(path = '') {
-  const endpoint = path ? `/api/folders/${path}` : '/api/folders/';
+  const endpoint = path ? `/api/folders/${encodeApiPath(path)}` : '/api/folders/';
   return await apiRequest(endpoint);
 }
 
@@ -367,13 +375,13 @@ async function apiCreateFolder(path) {
 }
 
 async function apiDeleteFolder(path) {
-  return await apiRequest(`/api/folders/${path}`, {
+  return await apiRequest(`/api/folders/${encodeApiPath(path)}`, {
     method: 'DELETE'
   });
 }
 
 async function apiReadFile(path) {
-  return await apiRequest(`/api/files/${path}`);
+  return await apiRequest(`/api/files/${encodeApiPath(path)}`);
 }
 
 async function apiCreateFile(path, content) {
@@ -384,14 +392,14 @@ async function apiCreateFile(path, content) {
 }
 
 async function apiUpdateFile(path, content) {
-  return await apiRequest(`/api/files/${path}`, {
+  return await apiRequest(`/api/files/${encodeApiPath(path)}`, {
     method: 'PUT',
     body: { content: content }
   });
 }
 
 async function apiDeleteFile(path) {
-  return await apiRequest(`/api/files/${path}`, {
+  return await apiRequest(`/api/files/${encodeApiPath(path)}`, {
     method: 'DELETE'
   });
 }
@@ -415,7 +423,7 @@ async function apiCopy(source, destination) {
 }
 
 async function apiGetInfo(path) {
-  return await apiRequest(`/api/files/${path}/info`);
+  return await apiRequest(`/api/files/${encodeApiPath(path)}/info`);
 }
 
 // ========== SINCRONIZAÇÃO COM FILESYSTEM LOCAL ==========
