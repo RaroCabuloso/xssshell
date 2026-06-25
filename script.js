@@ -347,9 +347,9 @@
       // Retorna promessa ou null para indicar modo async
       return null;
     }
-    
+
     if (currentPath.length === 0) return fileTree;
-    
+
     let node = fileTree;
     for (const segment of currentPath) {
       if (!node.children || !node.children[segment]) return null;
@@ -357,6 +357,41 @@
       if (node.type !== "dir") return null;
     }
     return node;
+  }
+
+  function getNodeByPath(path) {
+    const normalized = normalizePath(String(path || "").trim());
+    if (!normalized) return fileTree;
+    const parts = normalized.split('/').filter(Boolean);
+    let node = fileTree;
+    for (const part of parts) {
+      if (!node || node.type !== 'dir' || !node.children || !node.children[part]) {
+        return null;
+      }
+      node = node.children[part];
+    }
+    return node;
+  }
+
+  function normalizeShellPath(inputPath) {
+    const raw = String(inputPath || '').trim();
+    const current = currentDir === '/' ? [] : currentDir.replace(/^\/+/g, '').replace(/\/+$/g, '').split('/').filter(Boolean);
+    if (!raw) return current.join('/');
+
+    const absolute = raw.startsWith('/');
+    const parts = raw.split('/').filter(Boolean);
+    const stack = absolute ? [] : [...current];
+
+    for (const part of parts) {
+      if (part === '.' || part === '') continue;
+      if (part === '..') {
+        if (stack.length > 0) stack.pop();
+      } else {
+        stack.push(part);
+      }
+    }
+
+    return stack.join('/');
   }
 
   function getPathString(pathArray) {
@@ -593,6 +628,7 @@
       localStorage.setItem(getLocalFileKey(candidate), content);
     }
 
+    refreshFilesystem();
     return { success: true, source: usedApi ? 'api' : 'local' };
   }
 
@@ -1167,55 +1203,92 @@
   }
 
   async function doLs(args) {
-    if (!window.API_CONFIG.ready) {
-      werr('ls: requer API ativa\n');
+    const targetArg = args && args[0] ? args[0] : '.';
+    const resolvedPath = normalizeShellPath(targetArg);
+
+    if (useApiSource && window.API_CONFIG.ready) {
+      try {
+        const pathQuery = resolvedPath || '';
+        const result = await window.apiListFolder(pathQuery);
+
+        if (result.success && result.data && result.data.items) {
+          const items = result.data.items;
+          if (items.length === 0) {
+            w("(diretório vazio)\n");
+            return;
+          }
+
+          const dirs = [], files = [];
+          for (const item of items) {
+            if (item.type === 'folder') {
+              dirs.push(`<span class="ls-dir">${esc(item.name)}/</span>`);
+            } else {
+              const ext = item.name.split(".").pop();
+              const isScript = ["js", "sh", "py", "rb"].includes(ext || "");
+              files.push(
+                isScript 
+                  ? `<span class="ls-exe">${esc(item.name)}*</span>` 
+                  : `<span class="ls-file">${esc(item.name)}</span>`
+              );
+            }
+          }
+
+          dirs.sort();
+          files.sort();
+          const all = [...dirs, ...files];
+          whtml(all.join("  ") + "\n");
+        } else {
+          werr(`ls: erro ao listar diretório\n`);
+        }
+      } catch (e) {
+        werr(`ls: ${e.message}\n`);
+      }
       return;
     }
 
     try {
-      const pathQuery = currentDir === '/' ? '' : currentDir.replace(/^\//, '');
-      const result = await window.apiListFolder(pathQuery);
-
-      if (result.success && result.data && result.data.items) {
-        const items = result.data.items;
-        if (items.length === 0) {
-          w("(diretório vazio)\n");
-          return;
-        }
-
-        const dirs = [], files = [];
-        for (const item of items) {
-          if (item.type === 'folder') {
-            dirs.push(`<span class="ls-dir">${esc(item.name)}/</span>`);
-          } else {
-            const ext = item.name.split(".").pop();
-            const isScript = ["js", "sh", "py", "rb"].includes(ext || "");
-            files.push(
-              isScript 
-                ? `<span class="ls-exe">${esc(item.name)}*</span>` 
-                : `<span class="ls-file">${esc(item.name)}</span>`
-            );
-          }
-        }
-        
-        dirs.sort();
-        files.sort();
-        const all = [...dirs, ...files];
-        whtml(all.join("  ") + "\n");
-      } else {
-        werr(`ls: erro ao listar diretório\n`);
+      const node = getNodeByPath(resolvedPath);
+      if (!node) {
+        werr(`ls: ${targetArg}: não encontrado\n`);
+        return;
       }
+
+      if (node.type === 'file') {
+        w(`${targetArg}\n`);
+        return;
+      }
+
+      const children = Object.entries(node.children || {});
+      if (children.length === 0) {
+        w("(diretório vazio)\n");
+        return;
+      }
+
+      const dirs = [], files = [];
+      for (const [name, child] of children) {
+        if (child.type === 'dir') {
+          dirs.push(`<span class="ls-dir">${esc(name)}/</span>`);
+        } else {
+          const ext = name.split('.').pop();
+          const isScript = ["js", "sh", "py", "rb"].includes(ext || "");
+          files.push(
+            isScript 
+              ? `<span class="ls-exe">${esc(name)}*</span>`
+              : `<span class="ls-file">${esc(name)}</span>`
+          );
+        }
+      }
+
+      dirs.sort();
+      files.sort();
+      const all = [...dirs, ...files];
+      whtml(all.join("  ") + "\n");
     } catch (e) {
       werr(`ls: ${e.message}\n`);
     }
   }
 
   async function doCd(target) {
-    if (!window.API_CONFIG.ready) {
-      werr('cd: requer API ativa\n');
-      return;
-    }
-
     if (!target || target === "/") {
       currentPath = [];
       currentDir = "/";
@@ -1223,6 +1296,8 @@
       saveSession();
       return;
     }
+
+    if (target === ".") return;
 
     if (target === "..") {
       if (currentPath.length > 0) {
@@ -1234,30 +1309,40 @@
       return;
     }
 
-    if (target === ".") return;
+    const resolved = normalizeShellPath(target);
 
-    try {
-      const pathQuery = (currentDir === '/' ? '' : currentDir.replace(/^\//, '')) + 
-                        (currentDir === '/' ? '' : '/') + target;
-      const cleanPath = pathQuery.replace(/\/+/g, '/').replace(/^\//, '');
-      const result = await window.apiListFolder(cleanPath);
-      
-      if (result.success) {
-        currentDir = '/' + cleanPath;
-        currentPath = cleanPath.split('/').filter(p => p);
-        updatePrompt();
-        saveSession();
-      } else {
-        werr(`cd: ${target}: diretório não encontrado\n`);
+    if (useApiSource && window.API_CONFIG.ready) {
+      try {
+        const result = await window.apiListFolder(resolved || '');
+        if (result.success) {
+          currentDir = resolved ? '/' + resolved : '/';
+          currentPath = resolved.split('/').filter(p => p);
+          updatePrompt();
+          saveSession();
+        } else {
+          werr(`cd: ${target}: diretório não encontrado\n`);
+        }
+      } catch (e) {
+        werr(`cd: ${target}: ${e.message}\n`);
       }
-    } catch (e) {
-      werr(`cd: ${target}: ${e.message}\n`);
+      return;
     }
+
+    const node = getNodeByPath(resolved);
+    if (!node || node.type !== 'dir') {
+      werr(`cd: ${target}: diretório não encontrado\n`);
+      return;
+    }
+
+    currentDir = resolved ? '/' + resolved : '/';
+    currentPath = resolved.split('/').filter(p => p);
+    updatePrompt();
+    saveSession();
   }
 
   async function moveFileItem(sourcePath, destinationPath) {
     const source = resolveShellPath(sourcePath);
-    const destination = resolveShellPath(destinationPath);
+    let destination = resolveShellPath(destinationPath);
     if (!source || !destination) {
       return { success: false, error: 'origem e destino são obrigatórios' };
     }
@@ -1269,21 +1354,60 @@
       }
 
       const sourceEntry = getFileEntryFromList(source);
-      const sourceContent = sourceEntry?.content ?? localStorage.getItem(getLocalFileKey(source));
-      if (sourceContent === null && !sourceEntry) {
-        return { success: false, error: 'arquivo não encontrado' };
+      const sourceNode = getNodeByPath(source);
+      const destinationNode = getNodeByPath(destination);
+
+      if (sourceEntry) {
+        if (destinationNode?.type === 'dir') {
+          destination = normalizePath(`${destination}/${source.split('/').pop()}`);
+        }
+
+        const entryIndex = FILES.findIndex(file => normalizePath(file.name) === source);
+        if (entryIndex >= 0) {
+          const movedEntry = { name: destination, content: FILES[entryIndex].content };
+          FILES.splice(entryIndex, 1);
+          localStorage.removeItem(getLocalFileKey(source));
+          FILES.push(movedEntry);
+          localStorage.setItem(getLocalFileKey(destination), movedEntry.content);
+          refreshFilesystem();
+          return { success: true };
+        }
       }
 
-      const entryIndex = FILES.findIndex(file => normalizePath(file.name) === source);
-      if (entryIndex >= 0) {
-        FILES.splice(entryIndex, 1);
-      }
-      localStorage.removeItem(getLocalFileKey(source));
+      if (sourceNode && sourceNode.type === 'dir') {
+        if (destinationNode?.type === 'file') {
+          return { success: false, error: 'destino inválido: arquivo existente' };
+        }
 
-      const movedEntry = { name: destination, content: sourceContent ?? '' };
-      FILES.push(movedEntry);
-      localStorage.setItem(getLocalFileKey(destination), sourceContent ?? '');
-      return { success: true };
+        const normalizedSourcePrefix = source === '' ? '' : `${source}/`;
+        const sourceFiles = FILES.filter(file => normalizePath(file.name) === source || normalizePath(file.name).startsWith(normalizedSourcePrefix));
+        if (sourceFiles.length === 0) {
+          return { success: false, error: 'origem não encontrada' };
+        }
+
+        if (destinationNode?.type === 'dir') {
+          destination = normalizePath(`${destination}/${source.split('/').pop()}`);
+        }
+
+        for (const file of sourceFiles) {
+          const normalizedName = normalizePath(file.name);
+          const suffix = normalizedName === source ? '' : normalizedName.slice(normalizedSourcePrefix.length);
+          const newPath = normalizePath(`${destination}${suffix ? '/' + suffix : ''}`);
+          FILES.push({ name: newPath, content: file.content });
+          localStorage.setItem(getLocalFileKey(newPath), file.content);
+        }
+
+        for (const file of sourceFiles) {
+          const index = FILES.findIndex(item => normalizePath(item.name) === normalizePath(file.name));
+          if (index >= 0) FILES.splice(index, 1);
+          localStorage.removeItem(getLocalFileKey(normalizePath(file.name)));
+        }
+
+        refreshFilesystem();
+        return { success: true };
+      }
+
+      return { success: false, error: 'arquivo ou diretório não encontrado' };
     } catch (error) {
       return { success: false, error: error.message };
     }
@@ -1292,24 +1416,34 @@
   async function doCat(file) {
     if (!file) { werr("cat: argumento obrigatório\n"); return; }
 
-    if (!window.API_CONFIG.ready) {
-      werr('cat: requer API ativa\n');
+    const resolved = normalizeShellPath(file);
+
+    if (useApiSource && window.API_CONFIG.ready) {
+      try {
+        const result = await window.apiReadFile(resolved);
+        if (result.success && result.data) {
+          w(result.data.content + (result.data.content.endsWith("\n") ? "" : "\n"));
+        } else {
+          werr(`cat: ${file}: ${result.error || 'erro ao ler'}\n`);
+        }
+      } catch (e) {
+        werr(`cat: ${file}: ${e.message}\n`);
+      }
       return;
     }
 
-    try {
-      const filePath = (currentDir === '/' ? '' : currentDir.replace(/^\//, '') + '/') + file;
-      const cleanPath = filePath.replace(/\/+/g, '/').replace(/^\//, '');
-      const result = await window.apiReadFile(cleanPath);
-      
-      if (result.success && result.data) {
-        w(result.data.content + (result.data.content.endsWith("\n") ? "" : "\n"));
-      } else {
-        werr(`cat: ${file}: ${result.error || 'erro ao ler'}\n`);
-      }
-    } catch (e) {
-      werr(`cat: ${file}: ${e.message}\n`);
+    const node = getNodeByPath(resolved);
+    if (!node) {
+      werr(`cat: ${file}: não encontrado\n`);
+      return;
     }
+    if (node.type !== 'file') {
+      werr(`cat: ${file}: não é um arquivo\n`);
+      return;
+    }
+
+    const content = await readFileContent(resolved);
+    w(content + (content.endsWith("\n") ? "" : "\n"));
   }
 
   function doPwd() {
@@ -1450,31 +1584,38 @@
           whtml(
             `<span class="p-user">Sharp Shell v0.9 — Terminal Interativo</span>\n` +
             `<span class="p-line1">─────────────────────────────────────────</span>\n` +
-            `<span style="color:#00ccff">Comandos do Sistema:</span>\n` +
-            `  <span class="p-arrow">help</span>             mostra esta ajuda\n` +
-            `  <span class="p-arrow">clear</span>            limpar terminal\n` +
-            `  <span class="p-arrow">cmd</span> [new|list|del|run]  gerenciar comandos customizados\n` +
-            `  <span class="p-arrow">whoami</span>           usuário atual\n` +
-            `  <span class="p-arrow">date</span>             data e hora\n` +
-            `  <span class="p-arrow">echo</span> [texto]     ecoar texto\n` +
-            `  <span class="p-arrow">mount</span>            montar/atualizar storage\n` +
-            `  <span class="p-arrow">ls</span> [dir]         listar arquivos\n` +
-            `  <span class="p-arrow">cd</span> [dir]         navegar diretórios\n` +
-            `  <span class="p-arrow">cat</span> [arquivo]    ler conteúdo\n` +
-            `  <span class="p-arrow">pwd</span>              mostrar caminho\n` +
-            `  <span class="p-arrow">tree</span>             árvore de diretórios\n` +
-            `  <span class="p-arrow">search</span> [termo]   buscar arquivos (API)\n` +
-            `  <span class="p-arrow">mkdir</span> [dir]      criar diretório (API)\n` +
-            `  <span class="p-arrow">touch</span> [arq]      criar arquivo (API)\n` +
-            `  <span class="p-arrow">rm</span> [arq/dir]     deletar arquivo/pasta (API)\n` +
-            `  <span class="p-arrow">api</span>              info da API\n` +
-            `  <span class="p-arrow">sync</span>             sincronizar com API\n` +
-            `  <span class="p-arrow">logout</span>           salvar sessão e sair\n` +
-            `  <span class="p-arrow">nano</span> [arquivo]  abrir editor simples\n` +
-            `  <span class="p-arrow">upload</span>           enviar arquivo/pasta para o diretório atual\n` +
-            (modularCommands.length > 0 ? `\n<span style="color:#00ccff">Comandos Modulares:</span>\n${modularList}` : "") +
+            `<span style="color:#00ccff">Comandos básicos:</span>\n` +
+            `  <span class="p-arrow">help</span>                mostra esta ajuda\n` +
+            `  <span class="p-arrow">clear</span>               limpar terminal\n` +
+            `  <span class="p-arrow">whoami</span>              usuário atual\n` +
+            `  <span class="p-arrow">date</span>                data e hora\n` +
+            `  <span class="p-arrow">echo</span> [texto]        ecoar texto\n` +
+            `  <span class="p-arrow">pwd</span>                 mostrar caminho atual\n` +
+            `  <span class="p-arrow">ls</span> [dir]            listar arquivos\n` +
+            `  <span class="p-arrow">cd</span> [dir]            navegar diretórios\n` +
+            `  <span class="p-arrow">tree</span>               exibir árvore de diretórios\n` +
+            `  <span class="p-arrow">cat</span> <arquivo>      mostrar conteúdo de arquivo\n` +
+            `  <span class="p-arrow">touch</span> <arquivo>    criar/editar arquivo local\n` +
+            `  <span class="p-arrow">rm</span> <arquivo|pasta>  remover item local\n` +
+            `  <span class="p-arrow">mv</span> <origem> <destino> mover/renomear\n` +
+            `  <span class="p-arrow">rename</span> <origem> <destino> alias de mv\n` +
+            `  <span class="p-arrow">nano</span> [-v] <arquivo>  editar arquivo com nano\n` +
+            `  <span class="p-arrow">upload</span> [-f|-p]     enviar arquivo ou pasta\n` +
+            `  <span class="p-arrow">cmd</span> new <arquivo>   registrar comando customizado\n` +
+            `  <span class="p-arrow">cmd</span> new -p <pasta>  registrar comandos de pasta\n` +
+            `  <span class="p-arrow">cmd</span> list            listar comandos customizados\n` +
+            `  <span class="p-arrow">cmd</span> del <nome>      remover comando customizado\n` +
+            `  <span class="p-arrow">cmd</span> run <script>    executar script local\n` +
+            `  <span class="p-arrow">mount</span>              montar/atualizar storage API\n` +
+            `  <span class="p-arrow">api</span>                exibir informações da API\n` +
+            `  <span class="p-arrow">search</span> <termo>     buscar arquivos (API)\n` +
+            `  <span class="p-arrow">mkdir</span> <dir>        criar diretório via API\n` +
+            `  <span class="p-arrow">sync</span>               sincronizar estrutura com API\n` +
+            `  <span class="p-arrow">logout</span>            encerrar sessão\n` +
+            `  <span class="p-arrow">exit</span> | <span class="p-arrow">sair</span>      sair do terminal\n` +
+            (modularCommands.length > 0 ? `\n<span style="color:#00ccff">Comandos modulares:</span>\n${modularList}` : "") +
             `<span class="p-line1">─────────────────────────────────────────</span>\n` +
-            `<span class="warn">Dica: use ↑↓ para histórico · Fonte: API · ${Object.keys(commands).length} modulares</span>\n`
+            `<span class="warn">Dica: use ↑↓ para histórico · ${useApiSource && window.API_CONFIG.ready ? 'API habilitada' : 'modo local'} · ${Object.keys(commands).length} comandos modulares</span>\n`
           );
           break;
 
@@ -1610,25 +1751,76 @@
           break;
 
         case "rm":
-          if (useApiSource && window.API_CONFIG.ready && args[1]) {
+          if (!args[1]) {
+            werr("rm: caminho obrigatório\n");
+            break;
+          }
+
+          const target = normalizeShellPath(args[1]);
+          const targetDir = target.endsWith('/') ? target.slice(0, -1) : target;
+          const targetCandidates = Array.from(new Set([
+            target,
+            targetDir,
+            targetDir + '/',
+            args[1].replace(/^\/+/, '')
+          ].filter(Boolean)));
+
+          if (useApiSource && window.API_CONFIG.ready) {
             try {
-              const path = args[1].startsWith('/') ? args[1] : currentDir + (currentDir === '/' ? '' : '/') + args[1];
-              // Tenta deletar como arquivo primeiro
-              let result = await window.apiDeleteFile(path.replace(/^\//, ''));
-              if (!result.success) {
-                // Se falhar, tenta como pasta
-                result = await window.apiDeleteFolder(path.replace(/^\//, ''));
+              let result = null;
+              for (const candidate of targetCandidates) {
+                result = await window.apiDeleteFile(candidate);
+                if (result.success) break;
               }
-              if (result.success) {
-                w(`Deletado: ${path}\n`);
+              if (!result?.success) {
+                for (const candidate of targetCandidates) {
+                  result = await window.apiDeleteFolder(candidate);
+                  if (result.success) break;
+                }
+              }
+              if (result && result.success) {
+                w(`Deletado: ${args[1]}\n`);
               } else {
-                werr(`rm: ${result.error || 'erro'}\n`);
+                werr(`rm: ${result?.error || 'nao encontrado'}\n`);
               }
             } catch (e) {
               werr(`rm: ${e.message}\n`);
             }
-          } else {
-            werr("rm: requer API ativa e caminho do item\n");
+            break;
+          }
+
+          try {
+            const fileEntry = getFileEntryFromList(targetDir);
+            if (fileEntry) {
+              const index = FILES.findIndex(file => normalizePath(file.name) === targetDir);
+              if (index >= 0) FILES.splice(index, 1);
+              localStorage.removeItem(getLocalFileKey(targetDir));
+              refreshFilesystem();
+              w(`Deletado: ${args[1]}\n`);
+              break;
+            }
+
+            const dirNode = getNodeByPath(targetDir);
+            if (dirNode && dirNode.type === 'dir') {
+              const prefix = targetDir === '' ? '' : `${targetDir}/`;
+              const toRemove = FILES.filter(file => normalizePath(file.name) === targetDir || normalizePath(file.name).startsWith(prefix));
+              if (toRemove.length === 0) {
+                werr(`rm: ${args[1]}: não encontrado\n`);
+                break;
+              }
+              for (const file of toRemove) {
+                const index = FILES.findIndex(item => normalizePath(item.name) === normalizePath(file.name));
+                if (index >= 0) FILES.splice(index, 1);
+                localStorage.removeItem(getLocalFileKey(normalizePath(file.name)));
+              }
+              refreshFilesystem();
+              w(`Deletado: ${args[1]}\n`);
+              break;
+            }
+
+            werr(`rm: ${args[1]}: não encontrado\n`);
+          } catch (e) {
+            werr(`rm: ${e.message}\n`);
           }
           break;
 
