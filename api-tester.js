@@ -209,14 +209,15 @@ async function runConnectionTests(statusCallback) {
 // ========== WRAPPER DE API UNIFICADO ==========
 
 async function apiRequest(endpoint, options = {}) {
-  if (!API_CONFIG.ready || !API_CONFIG.token) {
-    throw new Error('API não configurada ou sem autenticação');
+  if (!API_CONFIG.ready) {
+    throw new Error('API não configurada');
   }
 
   const url = API_CONFIG.baseUrl + endpoint;
   const headers = {
-    'Authorization': 'Bearer ' + API_CONFIG.token,
+    'Accept': '*/*',
     'Content-Type': 'application/json',
+    ...(API_CONFIG.token ? { 'Authorization': 'Bearer ' + API_CONFIG.token } : {}),
     ...options.headers
   };
 
@@ -232,45 +233,49 @@ async function apiRequest(endpoint, options = {}) {
         body: options.body ? JSON.stringify(options.body) : undefined
       });
     } else if (method.startsWith('xhr')) {
-      response = await testXHR(
-        options.method || 'GET',
-        url,
-        options.body || null
-      );
-      // Adiciona headers manualmente para XHR
-      // (XHR headers são setados dentro de testXHR, mas precisamos do auth)
-      // Para simplificar, refazemos com headers
       response = await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open(options.method || 'GET', url, true);
-        xhr.timeout = 10000;
-        xhr.setRequestHeader('Authorization', 'Bearer ' + API_CONFIG.token);
-        xhr.setRequestHeader('Content-Type', 'application/json');
-        
-        xhr.onload = () => resolve({
-          ok: xhr.status >= 200 && xhr.status < 300,
-          status: xhr.status,
-          json: () => Promise.resolve(JSON.parse(xhr.responseText)),
-          text: () => Promise.resolve(xhr.responseText)
-        });
-        xhr.onerror = () => reject(new Error('XHR error'));
-        xhr.ontimeout = () => reject(new Error('XHR timeout'));
-        
-        xhr.send(options.body ? JSON.stringify(options.body) : null);
+        try {
+          const xhr = new XMLHttpRequest();
+          xhr.open(options.method || 'GET', url, true);
+          xhr.timeout = 10000;
+          xhr.setRequestHeader('Accept', '*/*');
+          xhr.setRequestHeader('Content-Type', 'application/json');
+          if (API_CONFIG.token) {
+            xhr.setRequestHeader('Authorization', 'Bearer ' + API_CONFIG.token);
+          }
+
+          xhr.onload = () => {
+            resolve({
+              ok: xhr.status >= 200 && xhr.status < 300,
+              status: xhr.status,
+              json: () => Promise.resolve(xhr.responseText ? JSON.parse(xhr.responseText) : {}),
+              text: () => Promise.resolve(xhr.responseText)
+            });
+          };
+          xhr.onerror = () => reject(new Error('XHR error'));
+          xhr.ontimeout = () => reject(new Error('XHR timeout'));
+          xhr.send(options.body ? JSON.stringify(options.body) : null);
+        } catch (e) {
+          reject(new Error(`XHR failed: ${e.message}`));
+        }
       });
     } else {
       throw new Error('Método não suportado: ' + method);
     }
 
-    const data = await response.json();
+    let data;
+    try {
+      data = await response.json();
+    } catch (parseError) {
+      data = {};
+    }
 
     if (!response.ok) {
-      throw new Error(data.error || `HTTP ${response.status}`);
+      throw new Error((data && data.error) ? data.error : `HTTP ${response.status}`);
     }
 
     return data;
   } catch (error) {
-    // Se token expirou, tenta reautenticar
     if (error.message.includes('401') || error.message.includes('Token')) {
       API_CONFIG.ready = false;
       API_CONFIG.token = null;
