@@ -1596,7 +1596,7 @@
             `  <span class="p-arrow">tree</span>               exibir árvore de diretórios\n` +
             `  <span class="p-arrow">cat</span> <arquivo>      mostrar conteúdo de arquivo\n` +
             `  <span class="p-arrow">touch</span> <arquivo>    criar/editar arquivo local\n` +
-            `  <span class="p-arrow">rm</span> <arquivo|pasta>  remover item local\n` +
+            `  <span class="p-arrow">rm</span> [-p] <arquivo|pasta>  remover item local (use -p para pasta)\n` +
             `  <span class="p-arrow">mv</span> <origem> <destino> mover/renomear\n` +
             `  <span class="p-arrow">rename</span> <origem> <destino> alias de mv\n` +
             `  <span class="p-arrow">nano</span> [-v] <arquivo>  editar arquivo com nano\n` +
@@ -1750,38 +1750,55 @@
           }
           break;
 
-        case "rm":
-          if (!args[1]) {
+        case "rm": {
+          const rmArgs = args.slice(1);
+          const useFolderMode = rmArgs.includes('-p');
+          const targetArg = rmArgs.filter(a => a !== '-p')[0];
+
+          if (!targetArg) {
             werr("rm: caminho obrigatório\n");
             break;
           }
 
-          const target = normalizeShellPath(args[1]);
-          const targetDir = target.endsWith('/') ? target.slice(0, -1) : target;
-          const targetCandidates = Array.from(new Set([
-            target,
-            targetDir,
-            targetDir + '/',
-            args[1].replace(/^\/+/, '')
+          const target = normalizeShellPath(targetArg);
+          const normalized = target.endsWith('/') ? target.slice(0, -1) : target;
+          const candidates = Array.from(new Set([
+            normalized,
+            normalized + '/',
+            targetArg.replace(/^\/+/, '')
           ].filter(Boolean)));
+
+          const deleteApiFolder = async () => {
+            for (const candidate of candidates) {
+              const result = await window.apiDeleteFolder(candidate);
+              if (result && result.success) return result;
+            }
+            return { success: false, error: 'nao encontrado' };
+          };
+
+          const deleteApiFile = async () => {
+            for (const candidate of candidates) {
+              const result = await window.apiDeleteFile(candidate);
+              if (result && result.success) return result;
+            }
+            return { success: false, error: 'nao encontrado' };
+          };
 
           if (useApiSource && window.API_CONFIG.ready) {
             try {
               let result = null;
-              for (const candidate of targetCandidates) {
-                result = await window.apiDeleteFile(candidate);
-                if (result.success) break;
-              }
-              if (!result?.success) {
-                for (const candidate of targetCandidates) {
-                  result = await window.apiDeleteFolder(candidate);
-                  if (result.success) break;
+              if (useFolderMode || targetArg.endsWith('/')) {
+                result = await deleteApiFolder();
+              } else {
+                result = await deleteApiFile();
+                if (!result.success) {
+                  result = await deleteApiFolder();
                 }
               }
-              if (result && result.success) {
-                w(`Deletado: ${args[1]}\n`);
+              if (result.success) {
+                w(`Deletado: ${targetArg}\n`);
               } else {
-                werr(`rm: ${result?.error || 'nao encontrado'}\n`);
+                werr(`rm: ${result.error || 'nao encontrado'}\n`);
               }
             } catch (e) {
               werr(`rm: ${e.message}\n`);
@@ -1790,22 +1807,22 @@
           }
 
           try {
-            const fileEntry = getFileEntryFromList(targetDir);
-            if (fileEntry) {
-              const index = FILES.findIndex(file => normalizePath(file.name) === targetDir);
+            const fileEntry = getFileEntryFromList(normalized);
+            if (fileEntry && !fileEntry.type) {
+              const index = FILES.findIndex(file => normalizePath(file.name) === normalized);
               if (index >= 0) FILES.splice(index, 1);
-              localStorage.removeItem(getLocalFileKey(targetDir));
+              localStorage.removeItem(getLocalFileKey(normalized));
               refreshFilesystem();
-              w(`Deletado: ${args[1]}\n`);
+              w(`Deletado: ${targetArg}\n`);
               break;
             }
 
-            const dirNode = getNodeByPath(targetDir);
+            const dirNode = getNodeByPath(normalized);
             if (dirNode && dirNode.type === 'dir') {
-              const prefix = targetDir === '' ? '' : `${targetDir}/`;
-              const toRemove = FILES.filter(file => normalizePath(file.name) === targetDir || normalizePath(file.name).startsWith(prefix));
+              const prefix = normalized === '' ? '' : `${normalized}/`;
+              const toRemove = FILES.filter(file => normalizePath(file.name) === normalized || normalizePath(file.name).startsWith(prefix));
               if (toRemove.length === 0) {
-                werr(`rm: ${args[1]}: não encontrado\n`);
+                werr(`rm: ${targetArg}: não encontrado\n`);
                 break;
               }
               for (const file of toRemove) {
@@ -1814,15 +1831,16 @@
                 localStorage.removeItem(getLocalFileKey(normalizePath(file.name)));
               }
               refreshFilesystem();
-              w(`Deletado: ${args[1]}\n`);
+              w(`Deletado: ${targetArg}\n`);
               break;
             }
 
-            werr(`rm: ${args[1]}: não encontrado\n`);
+            werr(`rm: ${targetArg}: não encontrado\n`);
           } catch (e) {
             werr(`rm: ${e.message}\n`);
           }
           break;
+        }
 
         case "sync":
           if (useApiSource && window.API_CONFIG.ready) {
