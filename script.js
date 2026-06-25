@@ -83,6 +83,7 @@
   // ── command history ────────────────────────────────────────────────────────
   const cmdHistory = [];
   let histIdx = -1;
+  let terminalNanoState = null;
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -180,8 +181,83 @@
     document.cookie = `${name}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
   }
 
+  function persistNetworkSetup(method, token = null) {
+    if (method) {
+      setCookie('api_method', method, 365);
+      localStorage.setItem('sharpShell_network_method', method);
+    }
+    if (token) {
+      setCookie('api_token', token, 365);
+      localStorage.setItem('sharpShell_network_token', token);
+    }
+    localStorage.setItem('sharpShell_network_setup', '1');
+  }
+
+  function restoreNetworkSetup() {
+    const savedMethod = getCookie('api_method') || localStorage.getItem('sharpShell_network_method');
+    const savedToken = getCookie('api_token') || localStorage.getItem('sharpShell_network_token');
+    return { savedMethod, savedToken };
+  }
+
+  function persistLoginState(username) {
+    setCookie('sharpShell_logged_in', 'true', 365);
+    setCookie('sharpShell_user', username || USER, 365);
+  }
+
+  function isPersistedLoginActive() {
+    const savedToken = getCookie('api_token');
+    const savedMethod = getCookie('api_method');
+    return getCookie('sharpShell_logged_in') === 'true' && !!savedToken && !!savedMethod;
+  }
+
   function isMobileDevice() {
     return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  }
+
+  function normalizePath(path) {
+    return String(path || '').replace(/^\/+/, '').replace(/\/+/g, '/');
+  }
+
+  function getLocalFileKey(path) {
+    return `sharpShell_file:${normalizePath(path)}`;
+  }
+
+  async function readFileContent(path) {
+    const normalizedPath = normalizePath(path);
+    try {
+      if (window.API_CONFIG?.ready && typeof window.apiReadFile === 'function') {
+        const result = await window.apiReadFile(normalizedPath);
+        if (result?.success && result?.data) {
+          return result.data.content || '';
+        }
+      }
+    } catch (e) {
+      console.warn('[fs] API read failed, using local storage fallback', e);
+    }
+    return localStorage.getItem(getLocalFileKey(normalizedPath)) || '';
+  }
+
+  async function writeFileContent(path, content) {
+    const normalizedPath = normalizePath(path);
+    try {
+      if (window.API_CONFIG?.ready && typeof window.apiUpdateFile === 'function') {
+        const updateResult = await window.apiUpdateFile(normalizedPath, content);
+        if (updateResult?.success) {
+          return { success: true, source: 'api' };
+        }
+      }
+      if (window.API_CONFIG?.ready && typeof window.apiCreateFile === 'function') {
+        const createResult = await window.apiCreateFile(normalizedPath, content);
+        if (createResult?.success) {
+          return { success: true, source: 'api' };
+        }
+      }
+    } catch (e) {
+      console.warn('[fs] API write failed, using local storage fallback', e);
+    }
+
+    localStorage.setItem(getLocalFileKey(normalizedPath), content);
+    return { success: true, source: 'local' };
   }
 
   function openProgramWindow(title, htmlContent, options = {}) {
@@ -189,14 +265,14 @@
     const windowId = `app-window-${Date.now()}`;
 
     const sharedStyle = `
-      body { margin: 0; min-height: 100vh; background: #090909; color: #cdf781; font-family: monospace; }
-      .app-window-header { position: relative; background: #040404; border-bottom: 1px solid #335533; color: #cdf781; padding: 12px 16px; font-size: 14px; }
-      .app-window-close { position: absolute; right: 16px; top: 12px; border: none; background: transparent; color: #ff6b6b; font-size: 18px; cursor: pointer; }
-      .app-window-content { padding: 14px; }
-      .app-window-button { border: 1px solid #5f9f5f; background: rgba(95,159,95,0.1); color: #cdf781; padding: 10px 14px; cursor: pointer; margin-right: 8px; }
-      .app-window-button:hover { background: rgba(95,159,95,0.2); }
-      textarea { width: 100%; min-height: 360px; background: #040404; border: 1px solid #224422; color: #cdf781; padding: 12px; font-family: monospace; font-size: 13px; line-height: 1.4; resize: vertical; }
-      .app-status { margin-top: 12px; color: #88ff88; font-size: 13px; }
+      body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top, rgba(255,77,77,0.16), transparent 35%), #060606; color: #f1f1f1; font-family: "Monaco", "Courier New", monospace; }
+      .app-window-header { position: relative; background: linear-gradient(90deg, #191919, #0f0f0f); border-bottom: 1px solid #ff4d4d55; color: #ff5f5f; padding: 10px 14px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; }
+      .app-window-content { padding: 14px; background: rgba(5,5,5,0.96); }
+      .app-window-button { border: 1px solid #ff4d4d55; background: rgba(255,77,77,0.12); color: #ffd0d0; padding: 10px 14px; cursor: pointer; margin-right: 8px; }
+      .app-window-button:hover { background: rgba(255,77,77,0.2); }
+      textarea { width: 100%; min-height: 360px; background: #020202; border: 1px solid #ff4d4d33; color: #f5f5f5; padding: 12px; font-family: monospace; font-size: 13px; line-height: 1.4; resize: vertical; }
+      .app-status { margin-top: 12px; color: #ff8a8a; font-size: 13px; }
+      input[type="file"] { color: #f5f5f5; background: #0c0c0c; border: 1px solid #ff4d4d33; padding: 8px; width: 100%; }
     `;
 
     if (!isMobile) {
@@ -206,9 +282,8 @@
         return null;
       }
 
-      win.document.write(`<!DOCTYPE html><html><head><title>${title}</title><style>${sharedStyle}</style></head><body><div class="app-window-header">${title}<button id="appClose" class="app-window-close">×</button></div><div class="app-window-content">${htmlContent}</div></body></html>`);
+      win.document.write(`<!DOCTYPE html><html><head><title>${title}</title><style>${sharedStyle}</style></head><body><div class="app-window-header">${title}</div><div class="app-window-content">${htmlContent}</div></body></html>`);
       win.document.close();
-      win.document.getElementById('appClose')?.addEventListener('click', () => win.close());
       if (typeof options.onReady === 'function') {
         setTimeout(() => options.onReady(win), 150);
       }
@@ -221,7 +296,6 @@
       <div class="app-window" id="${windowId}">
         <div class="app-window-header">
           <span class="app-window-title">${title}</span>
-          <button class="app-window-close" type="button">×</button>
         </div>
         <div class="app-window-content">${htmlContent}</div>
       </div>
@@ -229,13 +303,10 @@
 
     document.body.appendChild(modal);
     const windowEl = modal.querySelector('.app-window');
-    const closeButton = modal.querySelector('.app-window-close');
     const header = modal.querySelector('.app-window-header');
 
     const focusModal = () => { modal.style.display = 'flex'; };
     focusModal();
-
-    closeButton?.addEventListener('click', () => modal.remove());
 
     let dragging = false;
     let offsetX = 0;
@@ -267,7 +338,7 @@
     return modal;
   }
 
-  async function openEditorWindow(filePath) {
+  async function openEditorWindow(filePath, useWindow = false) {
     const normalizedPath = filePath.startsWith('/') ? filePath.slice(1) : (currentDir === '/' ? filePath : currentDir.replace(/^\//, '') + '/' + filePath);
     const title = `nano - ${filePath}`;
     const contentHtml = `
@@ -282,25 +353,26 @@
       </div>
     `;
 
+    if (!useWindow) {
+      await openTerminalEditor(normalizedPath);
+      return;
+    }
+
     const instance = openProgramWindow(title, contentHtml, {
       onReady: async (container) => {
-        const doc = container.document || container;
-        const textarea = doc.getElementById('nanoEditor');
-        const saveButton = doc.getElementById('nanoSave');
-        const closeButton = doc.getElementById('nanoClose');
-        const status = doc.getElementById('nanoStatus');
+        const root = container.document ? container.document : container;
+        const textarea = root.getElementById ? root.getElementById('nanoEditor') : container.querySelector('#nanoEditor');
+        const saveButton = root.getElementById ? root.getElementById('nanoSave') : container.querySelector('#nanoSave');
+        const closeButton = root.getElementById ? root.getElementById('nanoClose') : container.querySelector('#nanoClose');
+        const status = root.getElementById ? root.getElementById('nanoStatus') : container.querySelector('#nanoStatus');
 
         async function loadContent() {
+          if (!status || !textarea) return;
           status.textContent = 'Carregando...';
           try {
-            const result = await window.apiReadFile(normalizedPath);
-            if (result.success && result.data) {
-              textarea.value = result.data.content || '';
-              status.textContent = 'Arquivo carregado.';
-            } else {
-              textarea.value = '';
-              status.textContent = 'Arquivo novo ou não encontrado.';
-            }
+            const content = await readFileContent(normalizedPath);
+            textarea.value = content;
+            status.textContent = 'Arquivo carregado.';
           } catch (e) {
             textarea.value = '';
             status.textContent = 'Erro ao carregar arquivo.';
@@ -308,16 +380,14 @@
         }
 
         async function saveFile() {
+          if (!status || !textarea) return;
           status.textContent = 'Salvando...';
           try {
-            let result = await window.apiUpdateFile(normalizedPath, textarea.value);
-            if (!result.success) {
-              result = await window.apiCreateFile(normalizedPath, textarea.value);
-            }
-            if (result && result.success) {
+            const result = await writeFileContent(normalizedPath, textarea.value);
+            if (result?.success) {
               status.textContent = 'Salvo com sucesso.';
             } else {
-              status.textContent = `Erro: ${result?.error || 'falha ao salvar'}`;
+              status.textContent = 'Erro ao salvar arquivo.';
             }
           } catch (e) {
             status.textContent = 'Erro ao salvar arquivo.';
@@ -327,7 +397,7 @@
         saveButton?.addEventListener('click', saveFile);
         closeButton?.addEventListener('click', () => {
           if (container.close) return container.close();
-          container.remove();
+          if (container.remove) container.remove();
         });
 
         await loadContent();
@@ -335,15 +405,73 @@
     });
 
     if (!instance) {
-      werr('nano: falha ao abrir editor.
-');
+      werr('nano: falha ao abrir editor.\n');
     }
+  }
+
+  async function openTerminalEditor(filePath) {
+    const normalizedPath = normalizePath(filePath.startsWith('/') ? filePath.slice(1) : filePath);
+    let content = '';
+
+    try {
+      content = await readFileContent(normalizedPath);
+    } catch (e) {
+      content = '';
+    }
+
+    terminalNanoState = {
+      filePath: normalizedPath,
+      content: content.split(/\r?\n/),
+      dirty: false
+    };
+
+    output.innerHTML = '';
+    whtml(`<span style="color:#77ff77">[nano] Modo terminal ativo</span>\n`);
+    w(`Arquivo: ${normalizedPath}\n`);
+    w(`Digite as linhas. Use :w para salvar, :wq para salvar e sair, :q para sair.\n`);
+    if (terminalNanoState.content.length && terminalNanoState.content[0] !== '') {
+      for (const line of terminalNanoState.content) {
+        w(`${line}\n`);
+      }
+    }
+    w(`\n`);
+    promptEl.textContent = 'nano> ';
+    cmdInput.value = '';
+    cmdInput.focus();
+  }
+
+  async function saveTerminalEditor(quitAfterSave = false) {
+    if (!terminalNanoState) return;
+    const content = terminalNanoState.content.join('\n');
+    try {
+      const result = await writeFileContent(terminalNanoState.filePath, content);
+      if (result?.success) {
+        whtml(`<span style="color:#77ff77">[nano] Arquivo salvo: ${esc(terminalNanoState.filePath)}</span>\n`);
+        terminalNanoState.dirty = false;
+        if (quitAfterSave) {
+          exitTerminalEditor();
+        }
+      } else {
+        werr('[nano] Falha ao salvar.\n');
+      }
+    } catch (e) {
+      werr(`[nano] Falha ao salvar: ${e.message}\n`);
+    }
+  }
+
+  function exitTerminalEditor() {
+    if (!terminalNanoState) return;
+    terminalNanoState = null;
+    promptEl.textContent = '└─❯❯ ';
+    cmdInput.value = '';
+    cmdInput.focus();
   }
 
   function clearSession() {
     localStorage.removeItem("sharpShell_session");
     deleteCookie("api_token");
-    deleteCookie("api_method");
+    deleteCookie("sharpShell_logged_in");
+    deleteCookie("sharpShell_user");
   }
 
   // ── Tela de Configuração de Ambiente ───────────────────────────────────────
@@ -372,34 +500,31 @@
 
     await sleep(800);
 
-    // Restaura método salvo se existir
-    const savedMethod = getCookie("api_method");
-    const savedToken = getCookie("api_token");
-    
-    if (savedMethod && savedToken) {
+    const { savedMethod, savedToken } = restoreNetworkSetup();
+
+    if (savedMethod) {
       whtml(`<span style="color:#888">Método salvo encontrado: ${savedMethod}</span>\n`);
       window.API_CONFIG.method = savedMethod;
-      window.API_CONFIG.token = savedToken;
+      window.API_CONFIG.token = savedToken || null;
       window.API_CONFIG.ready = true;
       useApiSource = true;
-      
-      whtml(`<span style="color:#66ff99">✓ Sessão API restaurada</span>\n\n`);
-      await sleep(1000);
-      
-      // Testa conexão rapidamente
-      try {
-        await window.apiListFolder('');
-        whtml(`<span style="color:#66ff99">✓ Conexão com API verificada</span>\n\n`);
-      } catch (e) {
-        whtml(`<span style="color:#ffcc44">⚠ Sessão pode ter expirado</span>\n\n`);
-        window.API_CONFIG.ready = false;
-        window.API_CONFIG.token = null;
-        useApiSource = false;
-        await sleep(500);
+
+      if (savedToken) {
+        whtml(`<span style="color:#66ff99">✓ Sessão API restaurada</span>\n\n`);
+        await sleep(700);
+        try {
+          await window.apiListFolder('');
+          whtml(`<span style="color:#66ff99">✓ Conexão com API verificada</span>\n\n`);
+        } catch (e) {
+          whtml(`<span style="color:#ffcc44">⚠ Sessão pode ter expirado</span>\n\n`);
+          window.API_CONFIG.ready = false;
+          window.API_CONFIG.token = null;
+          useApiSource = false;
+          await sleep(500);
+        }
       }
     }
 
-    // Se não tem método salvo ou expirou, faz os testes
     if (!window.API_CONFIG.ready) {
       const method = await window.runConnectionTests((msg) => {
         whtml(`<span style="color:#888">${msg}</span>\n`);
@@ -409,6 +534,7 @@
         window.API_CONFIG.method = method;
         window.API_CONFIG.ready = true;
         useApiSource = true;
+        persistNetworkSetup(method);
         whtml(`\n<span style="color:#66ff99">✓ Ambiente configurado com sucesso!</span>\n`);
         whtml(`<span style="color:#888">Método: ${method}</span>\n\n`);
       } else {
@@ -437,64 +563,64 @@
         justify-content: center;
         height: 100%;
         width: 100%;
+        background: radial-gradient(circle at top, rgba(255,0,0,0.16), transparent 45%), #040404;
+        color: #f5f5f5;
         animation: fadeIn 0.8s ease-in-out;
+        padding: 24px;
       ">
-        <div style="text-align: center; margin-bottom: 30px; animation: slideDown 0.6s ease-out;">
-          <pre style="color: #00ccff; font-size: 12px; line-height: 1.2;">
-   _____ __                     _____ __           __ 
-  / ___// /_  ____ __________  / ___// /_  ___    / / 
-  \\__ \\/ __ \\/ __ \`/ ___/ __ \\ \\__ \\/ __ \\/ _ \\  / /  
- ___/ / / / / /_/ / /  / /_/ /___/ / / / /  __/ / /___
-/____/_/ /_/\\__,_/_/   \\____//____/_/ /_/\\___/ /_____/
-          </pre>
-          <h2 style="color: #00ccff; margin: 10px 0; font-family: inherit; text-shadow: 0 0 10px rgba(0,204,255,0.3);">Sharp Shell Login</h2>
-          <p style="color: #888; font-family: inherit;">localhost | tty1</p>
-          <p style="color: #66ff99; font-size: 12px; margin-top: 5px;">🔗 API conectada</p>
+        <div style="text-align: center; margin-bottom: 24px; animation: slideDown 0.6s ease-out;">
+          <div style="color: #ff4d4d; font-size: 12px; letter-spacing: 0.2em; margin-bottom: 6px;">// DOXBIN ACCESS //</div>
+          <h2 style="color: #ff4d4d; margin: 8px 0 4px; font-family: inherit; text-shadow: 0 0 8px rgba(255,77,77,0.28);">Sharp Shell Login</h2>
+          <p style="color: #aaa; font-family: inherit;">localhost | tty1</p>
+          <p style="color: #7efc7b; font-size: 12px; margin-top: 6px;">🔗 API conectada</p>
         </div>
         
         <div id="loginBox" style="
-          background: rgba(0, 204, 255, 0.05);
-          border: 1px solid #00ccff33;
-          border-radius: 4px;
+          background: rgba(16, 16, 16, 0.95);
+          border: 1px solid #ff4d4d55;
+          box-shadow: 0 0 24px rgba(255,77,77,0.16);
+          border-radius: 6px;
           padding: 20px;
           min-width: 320px;
+          max-width: 360px;
+          width: 100%;
           animation: slideUp 0.8s ease-out;
-          backdrop-filter: blur(5px);
+          backdrop-filter: blur(6px);
         ">
           <div style="margin-bottom: 15px;">
-            <label style="color: #888; display: block; margin-bottom: 5px;">API Username:</label>
+            <label style="color: #ccc; display: block; margin-bottom: 5px;">API Username:</label>
             <input id="loginUser" type="text" autocomplete="off" spellcheck="false" style="
-              background: #0d0d0d;
-              border: 1px solid #333;
-              color: #00ccff;
+              background: #090909;
+              border: 1px solid #3d3d3d;
+              color: #fff;
               padding: 8px 12px;
               width: 100%;
               font-family: inherit;
               font-size: 14px;
               outline: none;
-              caret-color: #00ccff;
+              caret-color: #ff4d4d;
               transition: border-color 0.3s;
             " placeholder="raro"
-            onfocus="this.style.borderColor='#00ccff'"
-            onblur="this.style.borderColor='#333'">
+            onfocus="this.style.borderColor='#ff4d4d'"
+            onblur="this.style.borderColor='#3d3d3d'">
           </div>
           
           <div style="margin-bottom: 15px;">
-            <label style="color: #888; display: block; margin-bottom: 5px;">API Password:</label>
+            <label style="color: #ccc; display: block; margin-bottom: 5px;">API Password:</label>
             <input id="loginPassword" type="password" autocomplete="off" spellcheck="false" style="
-              background: #0d0d0d;
-              border: 1px solid #333;
-              color: #00ccff;
+              background: #090909;
+              border: 1px solid #3d3d3d;
+              color: #fff;
               padding: 8px 12px;
               width: 100%;
               font-family: inherit;
               font-size: 14px;
               outline: none;
-              caret-color: #00ccff;
+              caret-color: #ff4d4d;
               transition: border-color 0.3s;
             " placeholder="••••••"
-            onfocus="this.style.borderColor='#00ccff'"
-            onblur="this.style.borderColor='#333'">
+            onfocus="this.style.borderColor='#ff4d4d'"
+            onblur="this.style.borderColor='#3d3d3d'">
           </div>
           
           <div id="loginError" style="
@@ -513,9 +639,9 @@
           ">Conectando à API...</div>
           
           <button id="loginBtn" style="
-            background: #00ccff22;
-            border: 1px solid #00ccff;
-            color: #00ccff;
+            background: #1a1a1a;
+            border: 1px solid #ff4d4d;
+            color: #ff4d4d;
             padding: 8px 20px;
             width: 100%;
             font-family: inherit;
@@ -523,12 +649,12 @@
             cursor: pointer;
             border-radius: 4px;
             transition: all 0.3s;
-          " onmouseover="this.style.background='#00ccff44'"
-            onmouseout="this.style.background='#00ccff22'">
+          " onmouseover="this.style.background='#261010'"
+            onmouseout="this.style.background='#1a1a1a'">
             Entrar
           </button>
           
-          <p style="color: #555; font-size: 11px; margin-top: 15px; text-align: center;">
+          <p style="color: #666; font-size: 11px; margin-top: 15px; text-align: center;">
             Use suas credenciais da API Netlify para autenticar.
           </p>
         </div>
@@ -571,10 +697,12 @@
         return;
       }
 
-      setCookie('api_token', apiResult.token, 7);
+      setCookie('api_token', apiResult.token, 365);
       if (window.API_CONFIG.method) {
         setCookie('api_method', window.API_CONFIG.method, 365);
+        persistNetworkSetup(window.API_CONFIG.method, apiResult.token);
       }
+      persistLoginState(user);
 
       useApiSource = true;
       hideLoginScreen();
@@ -588,7 +716,7 @@
       document.querySelector(".input-line").style.animation = "fadeIn 0.5s ease-in-out";
 
       whtml(
-        `<span style="color:#00ccff">Bem-vindo de volta, ${esc(user)}!</span>\n` +
+        `<span style="color:#ff4d4d">Bem-vindo de volta, ${esc(user)}!</span>\n` +
         `<span style="color:#555">Último login: ${new Date().toLocaleString()}</span>\n` +
         `<span style="color:#888">Fonte: API (Telegram) · ${Object.keys(commands).length} comandos</span>\n\n`
       );
@@ -621,6 +749,59 @@
   function hideLoginScreen() {
     const loginScreen = document.getElementById("loginScreen");
     if (loginScreen) loginScreen.style.display = "none";
+  }
+
+  async function openUploadWindow(mode = 'file') {
+    const title = mode === 'folder' ? 'upload -p' : 'upload -f';
+    const contentHtml = `
+      <div>
+        <div style="margin-bottom: 10px; color: #ff8a8a;">Diretório atual: ${esc(currentDir)}</div>
+        <div style="margin-bottom: 8px; color: #aaa; font-size: 12px;">${mode === 'folder' ? 'Selecione uma pasta inteira para enviar.' : 'Selecione um ou mais arquivos para enviar.'}</div>
+        <input id="uploadInput" type="file" multiple ${mode === 'folder' ? 'webkitdirectory directory' : ''} style="margin-bottom: 10px;" />
+        <div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+          <button id="uploadStart" class="app-window-button">Enviar</button>
+          <span id="uploadStatus" class="app-status">${mode === 'folder' ? 'Escolha uma pasta.' : 'Escolha um ou mais arquivos.'}</span>
+        </div>
+      </div>
+    `;
+
+    const instance = openProgramWindow(title, contentHtml, {
+      onReady: async (container) => {
+        const root = container.document ? container.document : container;
+        const input = root.getElementById ? root.getElementById('uploadInput') : container.querySelector('#uploadInput');
+        const button = root.getElementById ? root.getElementById('uploadStart') : container.querySelector('#uploadStart');
+        const status = root.getElementById ? root.getElementById('uploadStatus') : container.querySelector('#uploadStatus');
+
+        button?.addEventListener('click', async () => {
+          const files = input?.files;
+          if (!files || files.length === 0) {
+            status.textContent = 'Nenhum arquivo selecionado.';
+            return;
+          }
+
+          status.textContent = 'Enviando...';
+          let count = 0;
+          try {
+            for (const file of files) {
+              const relativePath = file.webkitRelativePath
+                ? file.webkitRelativePath.split('/').slice(1).join('/')
+                : file.name;
+              const fullPath = normalizePath(`${currentDir === '/' ? '' : currentDir.replace(/^\//, '')}/${relativePath}`);
+              const content = await file.text();
+              await writeFileContent(fullPath, content);
+              count += 1;
+            }
+            status.textContent = `${count} item(ns) enviado(s) para ${currentDir}.`;
+          } catch (e) {
+            status.textContent = `Erro no upload: ${e.message}`;
+          }
+        });
+      }
+    });
+
+    if (!instance) {
+      werr('upload: falha ao abrir janela.\n');
+    }
   }
 
   // ── comandos de filesystem (modo local) ────────────────────────────────────
@@ -853,7 +1034,8 @@
       USER: USER,
       HOST: HOST,
       saveSession: saveSession,
-      useApiSource: useApiSource
+      useApiSource: useApiSource,
+      openEditorWindow: openEditorWindow
     };
 
     // Verifica se é um comando modular
@@ -898,6 +1080,8 @@
             `  <span class="p-arrow">api</span>              info da API\n` +
             `  <span class="p-arrow">sync</span>             sincronizar com API\n` +
             `  <span class="p-arrow">logout</span>           salvar sessão e sair\n` +
+            `  <span class="p-arrow">nano</span> [arquivo]  abrir editor simples\n` +
+            `  <span class="p-arrow">upload</span>           enviar arquivo/pasta para o diretório atual\n` +
             (modularCommands.length > 0 ? `\n<span style="color:#00ccff">Comandos Modulares:</span>\n${modularList}` : "") +
             `<span class="p-line1">─────────────────────────────────────────</span>\n` +
             `<span class="warn">Dica: use ↑↓ para histórico · Fonte: API · ${Object.keys(commands).length} modulares</span>\n`
@@ -1061,14 +1245,26 @@
 
         case "nano": {
           const rawArgs = args.slice(1);
-          const verbose = rawArgs.includes('-v');
+          const useWindow = rawArgs.includes('-v');
           const fileArg = rawArgs.filter(a => a !== '-v')[0];
           if (!fileArg) {
             werr('nano: arquivo obrigatório\n');
             w('Uso: nano [-v] arquivo\n');
             break;
           }
-          await openEditorWindow(fileArg);
+          await openEditorWindow(fileArg, useWindow);
+          break;
+        }
+
+        case "upload": {
+          const modeArg = args[1];
+          if (modeArg === '-p') {
+            await openUploadWindow('folder');
+          } else if (modeArg === '-f') {
+            await openUploadWindow('file');
+          } else {
+            await openUploadWindow('file');
+          }
           break;
         }
 
@@ -1089,6 +1285,40 @@
 
   cmdInput.addEventListener("keydown", async function (e) {
     if (!isLoggedIn) return;
+
+    if (terminalNanoState) {
+      const raw = cmdInput.value;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const command = raw.trim();
+        if (command === ':w') {
+          await saveTerminalEditor();
+        } else if (command === ':wq') {
+          await saveTerminalEditor(true);
+        } else if (command === ':q' || command === ':q!') {
+          exitTerminalEditor();
+        } else {
+          if (raw === '') {
+            terminalNanoState.content.push('');
+          } else {
+            terminalNanoState.content.push(raw);
+          }
+          w(`${raw}\n`);
+          cmdInput.value = '';
+          terminal.scrollTop = terminal.scrollHeight;
+        }
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        exitTerminalEditor();
+      } else if (e.ctrlKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        await saveTerminalEditor();
+      } else if (e.ctrlKey && (e.key.toLowerCase() === 'x' || e.key.toLowerCase() === 'q')) {
+        e.preventDefault();
+        exitTerminalEditor();
+      }
+      return;
+    }
 
     if (e.key === "Enter") {
       const raw = cmdInput.value;
@@ -1132,7 +1362,7 @@
   const savedSession = loadSession();
   const savedToken = getCookie("api_token");
   const savedMethod = getCookie("api_method");
-  const hasSavedApiSession = savedSession && savedSession.isLoggedIn && savedSession.useApiSource && savedToken && savedMethod;
+  const hasSavedApiSession = savedSession && savedSession.isLoggedIn && savedSession.useApiSource && isPersistedLoginActive();
 
   if (hasSavedApiSession) {
     window.API_CONFIG.token = savedToken;
