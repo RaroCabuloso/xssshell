@@ -637,14 +637,15 @@
     const windowId = `app-window-${Date.now()}`;
 
     const sharedStyle = `
-      body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top, rgba(255,77,77,0.16), transparent 35%), #060606; color: #f1f1f1; font-family: "Monaco", "Courier New", monospace; }
-      .app-window-header { position: relative; background: linear-gradient(90deg, #191919, #0f0f0f); border-bottom: 1px solid #ff4d4d55; color: #ff5f5f; padding: 10px 14px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; }
-      .app-window-content { padding: 14px; background: rgba(5,5,5,0.96); }
-      .app-window-button { border: 1px solid #ff4d4d55; background: rgba(255,77,77,0.12); color: #ffd0d0; padding: 10px 14px; cursor: pointer; margin-right: 8px; }
-      .app-window-button:hover { background: rgba(255,77,77,0.2); }
-      textarea { width: 100%; min-height: 360px; background: #020202; border: 1px solid #ff4d4d33; color: #f5f5f5; padding: 12px; font-family: monospace; font-size: 13px; line-height: 1.4; resize: vertical; }
-      .app-status { margin-top: 12px; color: #ff8a8a; font-size: 13px; }
-      input[type="file"] { color: #f5f5f5; background: #0c0c0c; border: 1px solid #ff4d4d33; padding: 8px; width: 100%; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; background: #030303; color: #f5f7ff; font-family: Inter, "Segoe UI", sans-serif; }
+      .app-window-header { position: relative; background: rgba(0,0,0,0.7); border-bottom: 1px solid rgba(255,255,255,0.08); color: #f5f7ff; padding: 12px 16px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; }
+      .app-window-content { padding: 16px; background: rgba(3,3,3,0.9); }
+      .app-window-button { border: none; background: #ffffff; color: #000; padding: 10px 14px; cursor: pointer; margin-right: 8px; border-radius: 10px; font-weight: 700; }
+      .app-window-button:hover { transform: translateY(-1px); box-shadow: 0 0 20px white; }
+      textarea { width: 100%; min-height: 360px; background: #111; border: none; color: #f5f7ff; padding: 12px; font-family: monospace; font-size: 13px; line-height: 1.4; resize: vertical; border-radius: 10px; }
+      .app-status { margin-top: 12px; color: #8fd4ff; font-size: 13px; }
+      input[type="file"] { color: #f5f7ff; background: #111; border: none; border-radius: 10px; padding: 10px; width: 100%; }
     `;
 
     if (!isMobile) {
