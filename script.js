@@ -929,36 +929,23 @@
 
     const loginHTML = `
       <div id="loginScreen" class="login-screen">
-        <canvas id="loginRain"></canvas>
-        <div id="loginLightning"></div>
+        <canvas id="rain"></canvas>
+        <div id="lightning"></div>
 
-        <div class="login-card">
+        <div class="login">
           <div class="logo-wrap">
-            <div class="logo" id="loginLogo">
+            <div class="logo" id="logo">
               <img src="https://lmpure.netlify.app/i/1600/Hermes-GERXMVP_-Song-Lyrics-Music-Videos-Concerts.jpeg" alt="Logo" />
             </div>
           </div>
 
-          <div class="login-title">
-            <div class="login-eyebrow">// DOXBIN ACCESS //</div>
-            <h2>LOGIN</h2>
-            <p>localhost · tty1</p>
-          </div>
+          <h2>LOGIN</h2>
 
-          <div class="login-field">
-            <label for="loginUser">Usuário</label>
-            <input id="loginUser" type="text" autocomplete="off" spellcheck="false" placeholder="raro" />
-          </div>
-
-          <div class="login-field">
-            <label for="loginPassword">Senha</label>
-            <input id="loginPassword" type="password" autocomplete="off" spellcheck="false" placeholder="••••••" />
-          </div>
-
+          <input id="loginUser" placeholder="Usuário" />
+          <input id="loginPassword" placeholder="Senha" type="password" />
+          <button id="loginBtn">Entrar</button>
           <div id="loginError" class="login-error">Credenciais inválidas</div>
           <div id="loginLoading" class="login-loading">Conectando à API...</div>
-          <button id="loginBtn" class="login-button">Entrar</button>
-          <p class="login-hint">Use suas credenciais da API Netlify para autenticar.</p>
         </div>
       </div>
     `;
@@ -969,56 +956,60 @@
     const loginPassword = document.getElementById("loginPassword");
     const loginError = document.getElementById("loginError");
     const loginLoading = document.getElementById("loginLoading");
-    const rainCanvas = document.getElementById("loginRain");
-    const lightning = document.getElementById("loginLightning");
-    const logo = document.getElementById("loginLogo");
+    const canvas = document.getElementById("rain");
+    const ctx = canvas?.getContext("2d");
+    const flash = document.getElementById("lightning");
+    const logo = document.getElementById("logo");
 
-    if (rainCanvas && rainCanvas.getContext) {
-      const rainCtx = rainCanvas.getContext("2d");
+    document.addEventListener("contextmenu", (event) => event.preventDefault());
 
-      function resizeRain() {
-        rainCanvas.width = window.innerWidth;
-        rainCanvas.height = window.innerHeight;
+    if (canvas && ctx) {
+      function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
       }
-      resizeRain();
-      window.addEventListener("resize", resizeRain);
+      resize();
+      window.addEventListener("resize", resize);
 
-      const drops = Array.from({ length: 450 }, () => ({
-        x: Math.random() * window.innerWidth,
-        y: Math.random() * window.innerHeight,
-        l: 10 + Math.random() * 20,
-        v: 6 + Math.random() * 10
-      }));
+      let drops = [];
+      for (let i = 0; i < 500; i++) {
+        drops.push({
+          x: Math.random() * window.innerWidth,
+          y: Math.random() * window.innerHeight,
+          l: 10 + Math.random() * 20,
+          v: 6 + Math.random() * 10
+        });
+      }
 
-      function drawRain() {
-        rainCtx.clearRect(0, 0, rainCanvas.width, rainCanvas.height);
-        rainCtx.strokeStyle = "rgba(180, 220, 255, 0.35)";
-        rainCtx.lineWidth = 1;
+      function rain() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = "rgba(180,220,255,.35)";
+        ctx.lineWidth = 1;
 
-        for (const drop of drops) {
-          rainCtx.beginPath();
-          rainCtx.moveTo(drop.x, drop.y);
-          rainCtx.lineTo(drop.x - 2, drop.y + drop.l);
-          rainCtx.stroke();
+        for (const d of drops) {
+          ctx.beginPath();
+          ctx.moveTo(d.x, d.y);
+          ctx.lineTo(d.x - 2, d.y + d.l);
+          ctx.stroke();
 
-          drop.y += drop.v;
-          if (drop.y > window.innerHeight) {
-            drop.y = -20;
-            drop.x = Math.random() * window.innerWidth;
+          d.y += d.v;
+          if (d.y > window.innerHeight) {
+            d.y = -20;
+            d.x = Math.random() * window.innerWidth;
           }
         }
 
-        requestAnimationFrame(drawRain);
+        requestAnimationFrame(rain);
       }
-      drawRain();
+      rain();
     }
 
-    if (lightning) {
+    if (flash) {
       setInterval(() => {
         if (Math.random() < 0.3) {
-          lightning.style.opacity = "0.9";
+          flash.style.opacity = 0.9;
           setTimeout(() => {
-            lightning.style.opacity = "0";
+            flash.style.opacity = 0;
           }, 80);
         }
       }, 2500);
@@ -1055,17 +1046,14 @@
       logo.addEventListener("pointerup", () => {
         dragging = false;
       });
-      logo.addEventListener("pointerleave", () => {
-        dragging = false;
-      });
 
-      function animateLogo() {
+      function animate() {
         rotX += (targetX - rotX) * 0.12;
         rotY += (targetY - rotY) * 0.12;
         logo.style.transform = `rotateX(${rotX}deg) rotateY(${rotY}deg)`;
-        requestAnimationFrame(animateLogo);
+        requestAnimationFrame(animate);
       }
-      animateLogo();
+      animate();
     }
 
     async function attemptLogin() {

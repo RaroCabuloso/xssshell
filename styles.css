@@ -99,51 +99,57 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
   overflow: hidden;
   background: #030303;
-  color: #f5f7ff;
-  font-family: Inter, "Segoe UI", sans-serif;
+  color: white;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.login-screen canvas {
+  position: fixed;
+  inset: 0;
+  z-index: -3;
+}
+
+.login-screen #lightning {
+  position: fixed;
+  inset: 0;
+  background: white;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -2;
 }
 
 .login-screen::before {
   content: "";
-  position: absolute;
+  position: fixed;
   inset: 0;
   background: radial-gradient(circle at top, #202020, #000);
-  z-index: 0;
+  z-index: -4;
 }
 
-.login-screen canvas,
-.login-screen #loginLightning {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
-
-.login-screen #loginLightning {
-  background: rgba(255,255,255,0.9);
-  opacity: 0;
-  pointer-events: none;
-}
-
-.login-card {
-  position: relative;
-  z-index: 1;
-  width: min(380px, 100%);
-  padding: 35px;
-  border-radius: 20px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(0, 0, 0, 0.45);
+.login {
+  width: 380px;
+  max-width: 95%;
   backdrop-filter: blur(18px);
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  padding: 35px;
   box-shadow: 0 0 60px rgba(0, 0, 0, 0.8);
-  animation: fadeInUp 0.8s ease both;
+  animation: appear 0.8s;
+}
+
+@keyframes appear {
+  from { opacity: 0; transform: translateY(40px) scale(0.9); }
+  to { opacity: 1; transform: none; }
 }
 
 .logo-wrap {
   display: flex;
   justify-content: center;
-  margin-bottom: 24px;
+  margin-bottom: 30px;
   perspective: 1000px;
 }
 
@@ -155,7 +161,8 @@ html, body {
   transform-style: preserve-3d;
   cursor: grab;
   touch-action: none;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .logo:active {
@@ -167,75 +174,29 @@ html, body {
   height: 100%;
   object-fit: cover;
   pointer-events: none;
+  user-drag: none;
+  -webkit-user-drag: none;
   user-select: none;
 }
 
-.login-title {
+.login h2 {
   text-align: center;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
+  font-weight: 600;
 }
 
-.login-eyebrow {
-  color: #8fd4ff;
-  font-size: 12px;
-  letter-spacing: 0.24em;
-  margin-bottom: 8px;
-}
-
-.login-title h2 {
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  color: #ffffff;
-  margin-bottom: 6px;
-}
-
-.login-title p {
-  color: #9fb0c9;
-  font-size: 13px;
-}
-
-.login-field {
-  margin-bottom: 14px;
-}
-
-.login-field label {
-  display: block;
-  margin-bottom: 6px;
-  color: #cdd8ea;
-  font-size: 13px;
-}
-
-.login-field input {
+.login input {
   width: 100%;
   padding: 14px;
+  margin: 10px 0;
   border: none;
+  outline: none;
   border-radius: 10px;
   background: #111;
-  color: #f5f7ff;
-  outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  color: white;
 }
 
-.login-field input:focus {
-  box-shadow: 0 0 0 2px rgba(255,255,255,0.16);
-}
-
-.login-error {
-  display: none;
-  margin-bottom: 10px;
-  color: #ff8d8d;
-  font-size: 13px;
-}
-
-.login-loading {
-  display: none;
-  margin-bottom: 10px;
-  color: #ffd36b;
-  font-size: 13px;
-}
-
-.login-button {
+.login button {
   width: 100%;
   padding: 14px;
   margin-top: 15px;
@@ -243,21 +204,33 @@ html, body {
   border-radius: 10px;
   background: #ffffff;
   color: #000;
-  font-weight: 700;
+  font-weight: bold;
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: 0.3s;
 }
 
-.login-button:hover {
+.login button:hover {
   transform: translateY(-2px);
   box-shadow: 0 0 20px white;
 }
 
-.login-hint {
-  margin-top: 14px;
-  text-align: center;
-  color: #7d8aa0;
-  font-size: 12px;
+.login-error {
+  display: none;
+  margin-top: 10px;
+  color: #ff8d8d;
+  font-size: 13px;
+}
+
+.login-loading {
+  display: none;
+  margin-top: 10px;
+  color: #ffd36b;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .logo { width: 120px; height: 120px; }
+  .login { padding: 25px; }
 }
 
 /* ── janelas de programa ─────────────── */
