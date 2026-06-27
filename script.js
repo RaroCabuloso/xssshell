@@ -923,112 +923,41 @@
     document.querySelector(".input-line").style.display = "none";
     output.style.display = "none";
 
-    // Remove tela de login anterior se existir
     const oldLogin = document.getElementById("loginScreen");
     if (oldLogin) oldLogin.remove();
 
     const loginHTML = `
-      <div id="loginScreen" style="
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        height: 100%;
-        width: 100%;
-        background: radial-gradient(circle at top, rgba(255,0,0,0.16), transparent 45%), #040404;
-        color: #f5f5f5;
-        animation: fadeIn 0.8s ease-in-out;
-        padding: 24px;
-      ">
-        <div style="text-align: center; margin-bottom: 24px; animation: slideDown 0.6s ease-out;">
-          <div style="color: #ff4d4d; font-size: 12px; letter-spacing: 0.2em; margin-bottom: 6px;">// DOXBIN ACCESS //</div>
-          <h2 style="color: #ff4d4d; margin: 8px 0 4px; font-family: inherit; text-shadow: 0 0 8px rgba(255,77,77,0.28);">Sharp Shell Login</h2>
-          <p style="color: #aaa; font-family: inherit;">localhost | tty1</p>
-          <p style="color: #7efc7b; font-size: 12px; margin-top: 6px;">🔗 API conectada</p>
-        </div>
-        
-        <div id="loginBox" style="
-          background: rgba(16, 16, 16, 0.95);
-          border: 1px solid #ff4d4d55;
-          box-shadow: 0 0 24px rgba(255,77,77,0.16);
-          border-radius: 6px;
-          padding: 20px;
-          min-width: 320px;
-          max-width: 360px;
-          width: 100%;
-          animation: slideUp 0.8s ease-out;
-          backdrop-filter: blur(6px);
-        ">
-          <div style="margin-bottom: 15px;">
-            <label style="color: #ccc; display: block; margin-bottom: 5px;">API Username:</label>
-            <input id="loginUser" type="text" autocomplete="off" spellcheck="false" style="
-              background: #090909;
-              border: 1px solid #3d3d3d;
-              color: #fff;
-              padding: 8px 12px;
-              width: 100%;
-              font-family: inherit;
-              font-size: 14px;
-              outline: none;
-              caret-color: #ff4d4d;
-              transition: border-color 0.3s;
-            " placeholder="raro"
-            onfocus="this.style.borderColor='#ff4d4d'"
-            onblur="this.style.borderColor='#3d3d3d'">
+      <div id="loginScreen" class="login-screen">
+        <canvas id="loginRain"></canvas>
+        <div id="loginLightning"></div>
+
+        <div class="login-card">
+          <div class="logo-wrap">
+            <div class="logo" id="loginLogo">
+              <img src="https://lmpure.netlify.app/i/1600/Hermes-GERXMVP_-Song-Lyrics-Music-Videos-Concerts.jpeg" alt="Logo" />
+            </div>
           </div>
-          
-          <div style="margin-bottom: 15px;">
-            <label style="color: #ccc; display: block; margin-bottom: 5px;">API Password:</label>
-            <input id="loginPassword" type="password" autocomplete="off" spellcheck="false" style="
-              background: #090909;
-              border: 1px solid #3d3d3d;
-              color: #fff;
-              padding: 8px 12px;
-              width: 100%;
-              font-family: inherit;
-              font-size: 14px;
-              outline: none;
-              caret-color: #ff4d4d;
-              transition: border-color 0.3s;
-            " placeholder="••••••"
-            onfocus="this.style.borderColor='#ff4d4d'"
-            onblur="this.style.borderColor='#3d3d3d'">
+
+          <div class="login-title">
+            <div class="login-eyebrow">// DOXBIN ACCESS //</div>
+            <h2>LOGIN</h2>
+            <p>localhost · tty1</p>
           </div>
-          
-          <div id="loginError" style="
-            color: #ff6b6b;
-            margin-bottom: 10px;
-            font-size: 13px;
-            display: none;
-            animation: shake 0.4s ease-in-out;
-          ">Credenciais inválidas</div>
-          
-          <div id="loginLoading" style="
-            color: #ffcc44;
-            margin-bottom: 10px;
-            font-size: 13px;
-            display: none;
-          ">Conectando à API...</div>
-          
-          <button id="loginBtn" style="
-            background: #1a1a1a;
-            border: 1px solid #ff4d4d;
-            color: #ff4d4d;
-            padding: 8px 20px;
-            width: 100%;
-            font-family: inherit;
-            font-size: 14px;
-            cursor: pointer;
-            border-radius: 4px;
-            transition: all 0.3s;
-          " onmouseover="this.style.background='#261010'"
-            onmouseout="this.style.background='#1a1a1a'">
-            Entrar
-          </button>
-          
-          <p style="color: #666; font-size: 11px; margin-top: 15px; text-align: center;">
-            Use suas credenciais da API Netlify para autenticar.
-          </p>
+
+          <div class="login-field">
+            <label for="loginUser">Usuário</label>
+            <input id="loginUser" type="text" autocomplete="off" spellcheck="false" placeholder="raro" />
+          </div>
+
+          <div class="login-field">
+            <label for="loginPassword">Senha</label>
+            <input id="loginPassword" type="password" autocomplete="off" spellcheck="false" placeholder="••••••" />
+          </div>
+
+          <div id="loginError" class="login-error">Credenciais inválidas</div>
+          <div id="loginLoading" class="login-loading">Conectando à API...</div>
+          <button id="loginBtn" class="login-button">Entrar</button>
+          <p class="login-hint">Use suas credenciais da API Netlify para autenticar.</p>
         </div>
       </div>
     `;
@@ -1039,6 +968,104 @@
     const loginPassword = document.getElementById("loginPassword");
     const loginError = document.getElementById("loginError");
     const loginLoading = document.getElementById("loginLoading");
+    const rainCanvas = document.getElementById("loginRain");
+    const lightning = document.getElementById("loginLightning");
+    const logo = document.getElementById("loginLogo");
+
+    if (rainCanvas && rainCanvas.getContext) {
+      const rainCtx = rainCanvas.getContext("2d");
+
+      function resizeRain() {
+        rainCanvas.width = window.innerWidth;
+        rainCanvas.height = window.innerHeight;
+      }
+      resizeRain();
+      window.addEventListener("resize", resizeRain);
+
+      const drops = Array.from({ length: 450 }, () => ({
+        x: Math.random() * window.innerWidth,
+        y: Math.random() * window.innerHeight,
+        l: 10 + Math.random() * 20,
+        v: 6 + Math.random() * 10
+      }));
+
+      function drawRain() {
+        rainCtx.clearRect(0, 0, rainCanvas.width, rainCanvas.height);
+        rainCtx.strokeStyle = "rgba(180, 220, 255, 0.35)";
+        rainCtx.lineWidth = 1;
+
+        for (const drop of drops) {
+          rainCtx.beginPath();
+          rainCtx.moveTo(drop.x, drop.y);
+          rainCtx.lineTo(drop.x - 2, drop.y + drop.l);
+          rainCtx.stroke();
+
+          drop.y += drop.v;
+          if (drop.y > window.innerHeight) {
+            drop.y = -20;
+            drop.x = Math.random() * window.innerWidth;
+          }
+        }
+
+        requestAnimationFrame(drawRain);
+      }
+      drawRain();
+    }
+
+    if (lightning) {
+      setInterval(() => {
+        if (Math.random() < 0.3) {
+          lightning.style.opacity = "0.9";
+          setTimeout(() => {
+            lightning.style.opacity = "0";
+          }, 80);
+        }
+      }, 2500);
+    }
+
+    if (logo) {
+      let dragging = false;
+      let rotX = 0;
+      let rotY = 0;
+      let targetX = 0;
+      let targetY = 0;
+      let lastX = 0;
+      let lastY = 0;
+
+      logo.addEventListener("dragstart", (event) => event.preventDefault());
+      logo.addEventListener("pointerdown", (event) => {
+        dragging = true;
+        lastX = event.clientX;
+        lastY = event.clientY;
+        logo.setPointerCapture(event.pointerId);
+      });
+      logo.addEventListener("pointermove", (event) => {
+        if (!dragging) return;
+
+        const dx = event.clientX - lastX;
+        const dy = event.clientY - lastY;
+
+        lastX = event.clientX;
+        lastY = event.clientY;
+
+        targetY += dx * 0.6;
+        targetX -= dy * 0.6;
+      });
+      logo.addEventListener("pointerup", () => {
+        dragging = false;
+      });
+      logo.addEventListener("pointerleave", () => {
+        dragging = false;
+      });
+
+      function animateLogo() {
+        rotX += (targetX - rotX) * 0.12;
+        rotY += (targetY - rotY) * 0.12;
+        logo.style.transform = `rotateX(${rotX}deg) rotateY(${rotY}deg)`;
+        requestAnimationFrame(animateLogo);
+      }
+      animateLogo();
+    }
 
     async function attemptLogin() {
       const user = loginUser.value.trim();
@@ -1088,8 +1115,8 @@
       document.querySelector(".input-line").style.animation = "fadeIn 0.5s ease-in-out";
 
       whtml(
-        `<span style="color:#ff4d4d">Bem-vindo de volta, ${esc(user)}!</span>\n` +
-        `<span style="color:#555">Último login: ${new Date().toLocaleString()}</span>\n` +
+        `<span style="color:#8fd4ff">Bem-vindo de volta, ${esc(user)}!</span>\n` +
+        `<span style="color:#8aa2c1">Último login: ${new Date().toLocaleString()}</span>\n` +
         `<span style="color:#888">Fonte: API (Telegram) · ${Object.keys(commands).length} comandos</span>\n\n`
       );
 
@@ -1106,12 +1133,14 @@
 
     document.getElementById("loginBtn").addEventListener("click", attemptLogin);
 
-    const lastInput = document.getElementById("loginPassword");
-    lastInput.addEventListener("keydown", function(e) {
+    loginUser.addEventListener("keydown", function(e) {
       if (e.key === "Enter") attemptLogin();
     });
 
-    // Foco no primeiro campo
+    loginPassword.addEventListener("keydown", function(e) {
+      if (e.key === "Enter") attemptLogin();
+    });
+
     setTimeout(() => {
       const firstInput = document.getElementById("apiUser") || loginUser;
       if (firstInput) firstInput.focus();
